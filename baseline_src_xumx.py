@@ -28,11 +28,16 @@ import logging
 # from import
 from tqdm import tqdm
 from sklearn import metrics
+from keras.models import Model
+from keras.layers import Input, Dense
+
 
 import torch
 from asteroid.models import XUMX
-
 import fast_bss_eval
+
+from baseline_mix_xumx import xumx_model
+
 ########################################################################
 
 
@@ -158,7 +163,7 @@ def file_load(wav_name, mono=False):
         logger.error("file_broken or not exists!! : {}".format(wav_name))
 
 
-def demux_wav(wav_name, channel=1):
+def demux_wav(wav_name, channel=0):
     """
     demux .wav file.
 
@@ -179,7 +184,7 @@ def demux_wav(wav_name, channel=1):
         if multi_channel_data.ndim <= 1:
             return sr, multi_channel_data
 
-        return sr, numpy.array(multi_channel_data)[:channel, :]
+        return sr, numpy.array(multi_channel_data)[channel, :]
 
     except ValueError as msg:
         logger.warning(f'{msg}')
@@ -193,9 +198,98 @@ def demux_wav(wav_name, channel=1):
 ########################################################################
 
 def file_to_wav(file_name):
-    sr, y = demux_wav(file_name, channel=2)
+    sr, y = demux_wav(file_name)
     return sr, y
 
+def wav_to_vector_array(sr, y,
+                         n_mels=64,
+                         frames=5,
+                         n_fft=1024,
+                         hop_length=512,
+                         power=2.0):
+    """
+    convert file_name to a vector array.
+
+    file_name : str
+        target .wav file
+
+    return : numpy.array( numpy.array( float ) )
+        vector array
+        * dataset.shape = (dataset_size, fearture_vector_length)
+    """
+    # 01 calculate the number of dimensions
+    dims = n_mels * frames
+
+    # 02 generate melspectrogram using librosa (**kwargs == param["librosa"])
+    mel_spectrogram = librosa.feature.melspectrogram(y=y,
+                                                     sr=sr,
+                                                     n_fft=n_fft,
+                                                     hop_length=hop_length,
+                                                     n_mels=n_mels,
+                                                     power=power)
+
+    # 03 convert melspectrogram to log mel energy
+    log_mel_spectrogram = 20.0 / power * numpy.log10(mel_spectrogram + sys.float_info.epsilon)
+
+    # 04 calculate total vector size
+    vectorarray_size = len(log_mel_spectrogram[0, :]) - frames + 1
+
+    # 05 skip too short clips
+    if vectorarray_size < 1:
+        return numpy.empty((0, dims), float)
+
+    # 06 generate feature vectors by concatenating multi_frames
+    vectorarray = numpy.zeros((vectorarray_size, dims), float)
+    for t in range(frames):
+        vectorarray[:, n_mels * t: n_mels * (t + 1)] = log_mel_spectrogram[:, t: t + vectorarray_size].T
+
+    return vectorarray
+
+
+def bandwidth_to_max_bin(rate, n_fft, bandwidth):
+    freqs = numpy.linspace(0, float(rate) / 2, n_fft // 2 + 1, endpoint=True)
+
+    return numpy.max(numpy.where(freqs <= bandwidth)[0]) + 1
+
+
+class XUMXSystem(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = None
+
+
+def xumx_model(path):
+    
+    x_unmix = XUMX(
+        window_length=4096,
+        input_mean=None,
+        input_scale=None,
+        nb_channels=2,
+        hidden_size=512,
+        in_chan=4096,
+        n_hop=1024,
+        sources=["fan", "pump", "slider", "valve"],
+        max_bin=bandwidth_to_max_bin(16000, 4096, 16000),
+        bidirectional=True,
+        sample_rate=16000,
+        spec_power=1,
+        return_time_signals=True,
+    )
+
+    conf = torch.load(path, map_location="cpu")
+
+    system = XUMXSystem()
+    system.model = x_unmix
+
+    system.load_state_dict(conf['state_dict'], strict=False)
+
+    return system.model
+
+model_path = '/hdd/hdd1/sss/xumx/0617_5_vanilla_no_mute_6dB_id4/checkpoints/epoch=39-step=1359.ckpt'
+
+sep_model = xumx_model(model_path)
+sep_model.eval()
+sep_model = sep_model.cuda()
 
 def train_list_to_vector_array(file_list,
                          msg="calc...",
@@ -219,32 +313,34 @@ def train_list_to_vector_array(file_list,
         * dataset.shape = (total_dataset_size, feature_vector_length)
     """
     # 01 calculate the number of dimensions
-    # dims = n_mels * frames
+    dims = n_mels * frames
 
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
 
         machine_types = ['fan', 'slider', 'pump', 'valve']
-        ys = 0
+        mixture_y = 0
+        target_type = os.path.split(os.path.split(file_list[idx])[0])[1]
+        target_idx = machine_types.index(target_type)
         for machine in machine_types:
-            filename = file_list[idx].replace('fan', machine)
+            filename = file_list[idx].replace(target_type, machine)
             sr, y = file_to_wav(filename)
-            ys = ys + y
+            mixture_y = mixture_y + y
         
-        vector_array = torch.Tensor(ys)
-        # [ch, time]
-
-        # vector_array = wav_to_vector_array(sr, ys,
-        #                                     n_mels=n_mels,
-        #                                     frames=frames,
-        #                                     n_fft=n_fft,
-        #                                     hop_length=hop_length,
-        #                                     power=power)
+        _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda())
+        ys = time[target_idx, 0, :, :].detach().cpu().numpy()
+        
+        vector_array = wav_to_vector_array(sr, ys,
+                                            n_mels=n_mels,
+                                            frames=frames,
+                                            n_fft=n_fft,
+                                            hop_length=hop_length,
+                                            power=power)
 
         if idx == 0:
-            dataset = torch.zeros_like(vector_array).unsqueeze(0).repeat(len(file_list), 1, 1)
+            dataset = numpy.zeros((vector_array.shape[0] * len(file_list), dims), float)
 
-        dataset[idx, :, :] = vector_array
+        dataset[vector_array.shape[0] * idx: vector_array.shape[0] * (idx + 1), :] = vector_array
 
     return dataset
 
@@ -322,44 +418,26 @@ def dataset_generator(target_dir,
 ########################################################################
 
 
-def bandwidth_to_max_bin(rate, n_fft, bandwidth):
-    freqs = numpy.linspace(0, float(rate) / 2, n_fft // 2 + 1, endpoint=True)
+########################################################################
+# keras model
+########################################################################
+def keras_model(inputDim):
+    """
+    define the keras model
+    the model based on the simple dense auto encoder (64*64*8*64*64)
+    """
+    inputLayer = Input(shape=(inputDim,))
+    h = Dense(64, activation="relu")(inputLayer)
+    h = Dense(64, activation="relu")(h)
+    h = Dense(8, activation="relu")(h)
+    h = Dense(64, activation="relu")(h)
+    h = Dense(64, activation="relu")(h)
+    h = Dense(inputDim, activation=None)(h)
 
-    return numpy.max(numpy.where(freqs <= bandwidth)[0]) + 1
-
-class XUMXSystem(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = None
+    return Model(inputs=inputLayer, outputs=h)
 
 
-def xumx_model(path):
-    
-    x_unmix = XUMX(
-        window_length=4096,
-        input_mean=None,
-        input_scale=None,
-        nb_channels=2,
-        hidden_size=512,
-        in_chan=4096,
-        n_hop=1024,
-        sources=["fan", "pump", "slider", "valve"],
-        max_bin=bandwidth_to_max_bin(16000, 4096, 16000),
-        bidirectional=True,
-        sample_rate=16000,
-        spec_power=1,
-        return_time_signals=True,
-    )
-
-    conf = torch.load(path, map_location="cpu")
-
-    system = XUMXSystem()
-    system.model = x_unmix
-
-    system.load_state_dict(conf['state_dict'], strict=False)
-
-    return system.model
-
+########################################################################
 
 
 ########################################################################
@@ -383,7 +461,6 @@ if __name__ == "__main__":
 
     # load base_directory list
     dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/fan/id_04".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
-    # dirs = sorted(glob.glob(os.path.abspath("{base}/*/fan/*".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
 
     # setup the result
     result_file = "{result}/{file_name}".format(result=param["result_directory"], file_name=param["result_file"])
@@ -402,7 +479,7 @@ if __name__ == "__main__":
 
         # setup path
         evaluation_result = {}
-        train_pickle = "{pickle}/train_{machine_type}_{machine_id}_{db}_waveform.pickle".format(pickle=param["pickle_directory"],
+        train_pickle = "{pickle}/train_{machine_type}_{machine_id}_{db}.pickle".format(pickle=param["pickle_directory"],
                                                                                        machine_type=machine_type,
                                                                                        machine_id=machine_id, db=db)
         eval_files_pickle = "{pickle}/eval_files_{machine_type}_{machine_id}_{db}.pickle".format(
@@ -430,70 +507,53 @@ if __name__ == "__main__":
         # dataset generator
         print("============== DATASET_GENERATOR ==============")
         if os.path.exists(train_pickle):
-            if os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
-                eval_files = load_pickle(eval_files_pickle)
-                eval_labels = load_pickle(eval_labels_pickle)
+            # train_data = load_pickle(train_pickle)
+            # if os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
+            eval_files = load_pickle(eval_files_pickle)
+            eval_labels = load_pickle(eval_labels_pickle)
         else:
             train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
 
+            train_data = train_list_to_vector_array(train_files,
+                                              msg="generate train_dataset",
+                                              n_mels=param["feature"]["n_mels"],
+                                              frames=param["feature"]["frames"],
+                                              n_fft=param["feature"]["n_fft"],
+                                              hop_length=param["feature"]["hop_length"],
+                                              power=param["feature"]["power"])
+
+            save_pickle(train_pickle, train_data)
             save_pickle(eval_files_pickle, eval_files)
             save_pickle(eval_labels_pickle, eval_labels)
 
-        # TODO
-        # model load
-        print("============== MODEL LOADING ==============")
-        if db == '0dB':
-            if machine_id == 'id_00':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_0dB_id0/checkpoints/epoch=41-step=1049.ckpt'
-            elif machine_id == 'id_02':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_0dB_id2/checkpoints/epoch=33-step=849.ckpt'
-            elif machine_id == 'id_04':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_0dB_id4/checkpoints/epoch=40-step=1024.ckpt'
-            elif machine_id == 'id_06':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_0dB_id6/checkpoints/epoch=37-step=949.ckpt'
-            else:
-                model_path = '/hdd/hdd1/sss/xumx/0613_vanilla_0dB/checkpoints/epoch=26-step=2024.ckpt'
-        elif db == '6dB':
-            if machine_id == 'id_00':
-                model_path = '/hdd/hdd1/sss/xumx/0617_5_vanilla_6dB_id0/checkpoints/epoch=21-step=1363.ckpt'
-                # model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_6dB_id0/checkpoints/epoch=32-step=824.ckpt'
-            elif machine_id == 'id_02':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_6dB_id2/checkpoints/epoch=33-step=849.ckpt'
-            elif machine_id == 'id_04':
-                model_path = '/hdd/hdd1/sss/xumx/0617_5_vanilla_no_mute_6dB_id4/checkpoints/epoch=39-step=1359.ckpt'
-                # model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_6dB_id4/checkpoints/epoch=41-step=1049.ckpt'
-            elif machine_id == 'id_06':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_6dB_id6/checkpoints/epoch=35-step=899.ckpt'
-            else:
-                model_path = '/hdd/hdd1/sss/xumx/0613_vanilla_6dB/checkpoints/epoch=16-step=1274.ckpt'
-        elif db == 'min6dB':
-            if machine_id == 'id_00':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_min6dB_id0/checkpoints/epoch=66-step=1674.ckpt'
-            elif machine_id == 'id_02':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_min6dB_id2/checkpoints/epoch=63-step=1599.ckpt'
-            elif machine_id == 'id_04':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_min6dB_id4/checkpoints/epoch=909-step=22749.ckpt'
-            elif machine_id == 'id_06':
-                model_path = '/hdd/hdd1/sss/xumx/0614_vanilla_min6dB_id6/checkpoints/epoch=60-step=1524.ckpt'
-            else:
-                model_path = '/hdd/hdd1/sss/xumx/0613_vanilla_min6dB/checkpoints/epoch=19-step=1499.ckpt'
-        else:
-            raise Exception('dB not found')
-        model = xumx_model(model_path)
-        model.eval()
-        model = model.cuda()
+        # model training
+        print("============== MODEL TRAINING ==============")
+        model = keras_model(param["feature"]["n_mels"] * param["feature"]["frames"])
+        model.summary()
 
-        logger.info(f"loading model <- {model_path}")
+        # training
+        if os.path.exists(model_file):
+            model.load_weights(model_file)
+        else:
+            model.compile(**param["fit"]["compile"])
+            history = model.fit(train_data,
+                                train_data,
+                                epochs=param["fit"]["epochs"],
+                                batch_size=param["fit"]["batch_size"],
+                                shuffle=param["fit"]["shuffle"],
+                                validation_split=param["fit"]["validation_split"],
+                                verbose=param["fit"]["verbose"])
+
+            visualizer.loss_plot(history.history["loss"], history.history["val_loss"])
+            visualizer.save_figure(history_img)
+            model.save_weights(model_file)
 
         # evaluation
         print("============== EVALUATION ==============")
         y_pred = numpy.array([0. for k in eval_labels])
         y_true = numpy.array(eval_labels)
-        
-        y_pred_types = {mt: numpy.copy(y_pred) for mt in machine_types}
-        y_true_types = {mt: numpy.copy(y_true) for mt in machine_types}
 
-        machine_types = ['fan', 'pump', 'slider', 'valve', ]
+        machine_types = ['fan', 'slider', 'pump', 'valve']
         eval_types = {mt: [] for mt in machine_types}
         # ys = 0
         # for machine in machine_types:
@@ -501,69 +561,38 @@ if __name__ == "__main__":
         #     sr, y = file_to_wav(filename)
         #     ys = ys + y
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
-            # try:
-            machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
-            ys = 0
-            gt_wav = {}
-            for normal_type in machine_types:
-                if normal_type == machine_type:
-                    continue
-                normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
-                sr, y = demux_wav(normal_file_name, channel=2)
+            try:
+                machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
+                ys = 0
+                for normal_type in machine_types:
+                    if normal_type == machine_type:
+                        continue
+                    normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
+                    sr, y = demux_wav(normal_file_name)
+                    ys += y
+                    
+                sr, y = demux_wav(file_name)
                 ys += y
-                gt_wav[normal_type] = y
-                
-            sr, y = demux_wav(file_name, channel=2)
-            ys += y
-            gt_wav[machine_type] = y
 
-            data = torch.Tensor(ys).cuda()
-            # 
-
-            #
-            t_data = data.unsqueeze(0)
-            # [B, Ch, time]
-            pred_spec, pred_wav, mix = model(t_data, return_mixture=True)
-            # pred_spec [src, Tb, B, ch, fb]
-            # pred_wav [src, B, ch, time]
-
-            # import soundfile
-            # soundfile.write("ch0.wav", pred_wav[0, 0].permute(1, 0).detach().cpu().numpy(), 16000)
-            # soundfile.write("ch1.wav", pred_wav[1, 0].permute(1, 0).detach().cpu().numpy(), 16000)
-            # soundfile.write("ch2.wav", pred_wav[2, 0].permute(1, 0).detach().cpu().numpy(), 16000)
-            # soundfile.write("ch3.wav", pred_wav[3, 0].permute(1, 0).detach().cpu().numpy(), 16000)
-
-            ## spec
-            # recon_error = torch.sum(pred_spec, dim=0) - mix
-            # error = torch.mean(torch.norm(recon_error, dim=[0, 3]))
-
-            ## wav
-            # recon_error = torch.sum(pred_wav, dim=0) - t_data[:, :, :pred_wav.shape[3]]
-            # error = torch.mean(torch.norm(recon_error, dim=2))
-            
-            ## wav_src
-            ref = torch.stack([torch.Tensor(gt_wav[machine_type]).unsqueeze(0) for machine_type in machine_types], dim=0)
-            recon_sisdr = fast_bss_eval.sdr(ref[:, :, :, :pred_wav.shape[3]].cuda(), pred_wav)
-            machine_idx = machine_types.index(machine_type)
-            error = -torch.mean(recon_sisdr[machine_idx, :, :])
-            
-            y_pred[num] = error.detach().cpu().numpy()
-            if num <= 250:
-                for i, mt in enumerate(machine_types):
-                    eval_types[mt].append(num)
-                    error = -torch.mean(recon_sisdr[i, :, :]).detach().cpu().numpy()
-                    y_pred_types[mt][num] = error
-                    y_true_types[mt][num] = y_true[num]
-            else:
-                eval_types[machine_type].append(num)
-                y_pred_types[machine_type][num] = error.detach().cpu().numpy()
-                y_true_types[machine_type][num] = y_true[num]
+                data = wav_to_vector_array(sr, ys,
+                                            n_mels=param["feature"]["n_mels"],
+                                            frames=param["feature"]["frames"],
+                                            n_fft=param["feature"]["n_fft"],
+                                            hop_length=param["feature"]["hop_length"],
+                                            power=param["feature"]["power"])
+                error = numpy.mean(numpy.square(data - model.predict(data)), axis=1)
+                y_pred[num] = numpy.mean(error)
+                if num <= 250:
+                    for mt in machine_types:
+                        eval_types[mt].append(num)
+                else:
+                    eval_types[machine_type].append(num)
+            except:
+                logger.warning("File broken!!: {}".format(file_name))
 
         scores = []
         for machine_type in machine_types:
-            y_pred_mt = y_pred_types[machine_type][eval_types[machine_type]]
-            y_pred_mt_ = numpy.exp(y_pred_mt)/sum(numpy.exp(y_pred_mt))
-            score = metrics.roc_auc_score(y_true_types[machine_type][eval_types[machine_type]], y_pred_mt_)
+            score = metrics.roc_auc_score(y_true[eval_types[machine_type]], y_pred[eval_types[machine_type]])
             logger.info("AUC_{} : {}".format(machine_type, score))
             evaluation_result["AUC_{}".format(machine_type)] = float(score)
             scores.append(score)

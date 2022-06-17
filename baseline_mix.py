@@ -402,7 +402,7 @@ if __name__ == "__main__":
     machine_types = ['fan', 'slider', 'pump', 'valve']
 
     # load base_directory list
-    dirs = sorted(glob.glob(os.path.abspath("{base}/*/fan/*".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
+    dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/fan/id_04".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
 
     # setup the result
     result_file = "{result}/{file_name}".format(result=param["result_directory"], file_name=param["result_file"])
