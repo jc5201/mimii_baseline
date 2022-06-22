@@ -448,25 +448,25 @@ if __name__ == "__main__":
 
         # dataset generator
         print("============== DATASET_GENERATOR ==============")
-        if os.path.exists(train_pickle):
-            # train_data = load_pickle(train_pickle)
-            # if os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
-            eval_files = load_pickle(eval_files_pickle)
-            eval_labels = load_pickle(eval_labels_pickle)
-        else:
-            train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
+        # if os.path.exists(train_pickle):
+        #     # train_data = load_pickle(train_pickle)
+        #     # if os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
+        #     eval_files = load_pickle(eval_files_pickle)
+        #     eval_labels = load_pickle(eval_labels_pickle)
+        # else:
+        train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
 
-            train_data = train_list_to_vector_array(train_files,
-                                              msg="generate train_dataset",
-                                              n_mels=param["feature"]["n_mels"],
-                                              frames=param["feature"]["frames"],
-                                              n_fft=param["feature"]["n_fft"],
-                                              hop_length=param["feature"]["hop_length"],
-                                              power=param["feature"]["power"])
+        train_data = train_list_to_vector_array(train_files,
+                                            msg="generate train_dataset",
+                                            n_mels=param["feature"]["n_mels"],
+                                            frames=param["feature"]["frames"],
+                                            n_fft=param["feature"]["n_fft"],
+                                            hop_length=param["feature"]["hop_length"],
+                                            power=param["feature"]["power"])
 
-            save_pickle(train_pickle, train_data)
-            save_pickle(eval_files_pickle, eval_files)
-            save_pickle(eval_labels_pickle, eval_labels)
+        save_pickle(train_pickle, train_data)
+        save_pickle(eval_files_pickle, eval_files)
+        save_pickle(eval_labels_pickle, eval_labels)
 
         # model training
         print("============== MODEL TRAINING ==============")

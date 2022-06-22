@@ -163,7 +163,7 @@ def file_load(wav_name, mono=False):
         logger.error("file_broken or not exists!! : {}".format(wav_name))
 
 
-def demux_wav(wav_name, channel=0):
+def demux_wav(wav_name, channel=1):
     """
     demux .wav file.
 
@@ -184,7 +184,7 @@ def demux_wav(wav_name, channel=0):
         if multi_channel_data.ndim <= 1:
             return sr, multi_channel_data
 
-        return sr, numpy.array(multi_channel_data)[channel, :]
+        return sr, numpy.array(multi_channel_data)[:channel, :]
 
     except ValueError as msg:
         logger.warning(f'{msg}')
@@ -198,7 +198,7 @@ def demux_wav(wav_name, channel=0):
 ########################################################################
 
 def file_to_wav(file_name):
-    sr, y = demux_wav(file_name)
+    sr, y = demux_wav(file_name, channel=2)
     return sr, y
 
 def wav_to_vector_array(sr, y,
@@ -285,11 +285,15 @@ def xumx_model(path):
 
     return system.model
 
-model_path = '/hdd/hdd1/sss/xumx/0617_5_vanilla_no_mute_6dB_id4/checkpoints/epoch=39-step=1359.ckpt'
+
+machine_types = ['fan', 'pump', 'slider', 'valve']
+
+model_path = '/hdd/hdd1/sss/xumx/0617_5_vanilla_no_mute_6dB_id4/checkpoints/epoch=52-step=1801.ckpt'
 
 sep_model = xumx_model(model_path)
 sep_model.eval()
 sep_model = sep_model.cuda()
+
 
 def train_list_to_vector_array(file_list,
                          msg="calc...",
@@ -318,9 +322,8 @@ def train_list_to_vector_array(file_list,
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
 
-        machine_types = ['fan', 'slider', 'pump', 'valve']
         mixture_y = 0
-        target_type = os.path.split(os.path.split(file_list[idx])[0])[1]
+        target_type = os.path.split(os.path.split(os.path.split(os.path.split(file_list[idx])[0])[0])[0])[1]
         target_idx = machine_types.index(target_type)
         for machine in machine_types:
             filename = file_list[idx].replace(target_type, machine)
@@ -328,7 +331,8 @@ def train_list_to_vector_array(file_list,
             mixture_y = mixture_y + y
         
         _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda())
-        ys = time[target_idx, 0, :, :].detach().cpu().numpy()
+        # [src, b, ch, time]
+        ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
         
         vector_array = wav_to_vector_array(sr, ys,
                                             n_mels=n_mels,
@@ -378,7 +382,6 @@ def dataset_generator(target_dir,
     logger.info("target_dir : {}".format(target_dir))
 
     # 01 normal list generate
-    machine_types = ['fan', 'slider', 'pump', 'valve']
     normal_files = sorted(glob.glob(
         os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir,
                                                                  normal_dir_name=normal_dir_name,
@@ -457,10 +460,9 @@ if __name__ == "__main__":
     # initialize the visualizer
     visualizer = visualizer()
 
-    machine_types = ['fan', 'slider', 'pump', 'valve']
 
     # load base_directory list
-    dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/fan/id_04".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
+    dirs = sorted(glob.glob(os.path.abspath("{base}/*/fan/*".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
 
     # setup the result
     result_file = "{result}/{file_name}".format(result=param["result_directory"], file_name=param["result_file"])
@@ -479,24 +481,24 @@ if __name__ == "__main__":
 
         # setup path
         evaluation_result = {}
-        train_pickle = "{pickle}/train_{machine_type}_{machine_id}_{db}.pickle".format(pickle=param["pickle_directory"],
+        train_pickle = "{pickle}/src_train_{machine_type}_{machine_id}_{db}.pickle".format(pickle=param["pickle_directory"],
                                                                                        machine_type=machine_type,
                                                                                        machine_id=machine_id, db=db)
-        eval_files_pickle = "{pickle}/eval_files_{machine_type}_{machine_id}_{db}.pickle".format(
+        eval_files_pickle = "{pickle}/src_eval_files_{machine_type}_{machine_id}_{db}.pickle".format(
                                                                                        pickle=param["pickle_directory"],
                                                                                        machine_type=machine_type,
                                                                                        machine_id=machine_id,
                                                                                        db=db)
-        eval_labels_pickle = "{pickle}/eval_labels_{machine_type}_{machine_id}_{db}.pickle".format(
+        eval_labels_pickle = "{pickle}/src_eval_labels_{machine_type}_{machine_id}_{db}.pickle".format(
                                                                                        pickle=param["pickle_directory"],
                                                                                        machine_type=machine_type,
                                                                                        machine_id=machine_id,
                                                                                        db=db)
-        model_file = "{model}/model_{machine_type}_{machine_id}_{db}.hdf5".format(model=param["model_directory"],
+        model_file = "{model}/src_model_{machine_type}_{machine_id}_{db}.hdf5".format(model=param["model_directory"],
                                                                                   machine_type=machine_type,
                                                                                   machine_id=machine_id,
                                                                                   db=db)
-        history_img = "{model}/history_{machine_type}_{machine_id}_{db}.png".format(model=param["model_directory"],
+        history_img = "{model}/src_history_{machine_type}_{machine_id}_{db}.png".format(model=param["model_directory"],
                                                                                     machine_type=machine_type,
                                                                                     machine_id=machine_id,
                                                                                     db=db)
@@ -504,27 +506,72 @@ if __name__ == "__main__":
                                                                           machine_id=machine_id,
                                                                           db=db)
 
+
+        if db == '0dB':
+            if machine_id == 'id_00':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id0/checkpoints/epoch=91-step=5703.ckpt'
+                continue
+            elif machine_id == 'id_02':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id2/checkpoints/epoch=28-step=1304.ckpt'
+                continue
+            elif machine_id == 'id_04':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id4/checkpoints/epoch=48-step=1665.ckpt'
+            elif machine_id == 'id_06':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id6/checkpoints/epoch=78-step=2685.ckpt'
+        elif db == 'min6dB':
+            if machine_id == 'id_00':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id0/checkpoints/epoch=58-step=3657.ckpt'
+                continue
+            elif machine_id == 'id_02':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id2/checkpoints/epoch=98-step=4454.ckpt'
+                continue
+            elif machine_id == 'id_04':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id4/checkpoints/epoch=23-step=815.ckpt'
+                continue
+            elif machine_id == 'id_06':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id6/checkpoints/epoch=89-step=3059.ckpt'
+                continue
+        else:
+            if machine_id == 'id_00':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id0/checkpoints/epoch=55-step=3471.ckpt'
+                continue
+            elif machine_id == 'id_02':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id2/checkpoints/epoch=98-step=4454.ckpt'
+                continue
+            elif machine_id == 'id_04':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id4/checkpoints/epoch=51-step=1767.ckpt'
+                continue
+            elif machine_id == 'id_06':
+                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id6/checkpoints/epoch=58-step=2005.ckpt'
+                continue
+        
+
+        sep_model = xumx_model(model_path)
+        sep_model.eval()
+        sep_model = sep_model.cuda()
+
+
         # dataset generator
         print("============== DATASET_GENERATOR ==============")
-        if os.path.exists(train_pickle):
-            # train_data = load_pickle(train_pickle)
-            # if os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
-            eval_files = load_pickle(eval_files_pickle)
-            eval_labels = load_pickle(eval_labels_pickle)
-        else:
-            train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
+        # if os.path.exists(train_pickle):
+        #     # train_data = load_pickle(train_pickle)
+        #     # if os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
+        #     eval_files = load_pickle(eval_files_pickle)
+        #     eval_labels = load_pickle(eval_labels_pickle)
+        # else:
+        train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
 
-            train_data = train_list_to_vector_array(train_files,
-                                              msg="generate train_dataset",
-                                              n_mels=param["feature"]["n_mels"],
-                                              frames=param["feature"]["frames"],
-                                              n_fft=param["feature"]["n_fft"],
-                                              hop_length=param["feature"]["hop_length"],
-                                              power=param["feature"]["power"])
+        train_data = train_list_to_vector_array(train_files,
+                                            msg="generate train_dataset",
+                                            n_mels=param["feature"]["n_mels"],
+                                            frames=param["feature"]["frames"],
+                                            n_fft=param["feature"]["n_fft"],
+                                            hop_length=param["feature"]["hop_length"],
+                                            power=param["feature"]["power"])
 
-            save_pickle(train_pickle, train_data)
-            save_pickle(eval_files_pickle, eval_files)
-            save_pickle(eval_labels_pickle, eval_labels)
+        save_pickle(train_pickle, train_data)
+        save_pickle(eval_files_pickle, eval_files)
+        save_pickle(eval_labels_pickle, eval_labels)
 
         # model training
         print("============== MODEL TRAINING ==============")
@@ -553,7 +600,6 @@ if __name__ == "__main__":
         y_pred = numpy.array([0. for k in eval_labels])
         y_true = numpy.array(eval_labels)
 
-        machine_types = ['fan', 'slider', 'pump', 'valve']
         eval_types = {mt: [] for mt in machine_types}
         # ys = 0
         # for machine in machine_types:
@@ -561,34 +607,36 @@ if __name__ == "__main__":
         #     sr, y = file_to_wav(filename)
         #     ys = ys + y
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
-            try:
-                machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
-                ys = 0
-                for normal_type in machine_types:
-                    if normal_type == machine_type:
-                        continue
-                    normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
-                    sr, y = demux_wav(normal_file_name)
-                    ys += y
-                    
-                sr, y = demux_wav(file_name)
-                ys += y
+            machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
+            target_idx = machine_types.index(machine_type)
+            mixture_y = 0
+            for normal_type in machine_types:
+                if normal_type == machine_type:
+                    continue
+                normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
+                sr, y = file_to_wav(normal_file_name)
+                mixture_y += y
+                
+            sr, y = file_to_wav(file_name)
+            mixture_y += y
 
-                data = wav_to_vector_array(sr, ys,
-                                            n_mels=param["feature"]["n_mels"],
-                                            frames=param["feature"]["frames"],
-                                            n_fft=param["feature"]["n_fft"],
-                                            hop_length=param["feature"]["hop_length"],
-                                            power=param["feature"]["power"])
-                error = numpy.mean(numpy.square(data - model.predict(data)), axis=1)
-                y_pred[num] = numpy.mean(error)
-                if num <= 250:
-                    for mt in machine_types:
-                        eval_types[mt].append(num)
-                else:
-                    eval_types[machine_type].append(num)
-            except:
-                logger.warning("File broken!!: {}".format(file_name))
+            _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda())
+            # [src, b, ch, time]
+            ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
+        
+            data = wav_to_vector_array(sr, ys,
+                                        n_mels=param["feature"]["n_mels"],
+                                        frames=param["feature"]["frames"],
+                                        n_fft=param["feature"]["n_fft"],
+                                        hop_length=param["feature"]["hop_length"],
+                                        power=param["feature"]["power"])
+            error = numpy.mean(numpy.square(data - model.predict(data)), axis=1)
+            y_pred[num] = numpy.mean(error)
+            if num <= 250:
+                for mt in machine_types:
+                    eval_types[mt].append(num)
+            else:
+                eval_types[machine_type].append(num)
 
         scores = []
         for machine_type in machine_types:
