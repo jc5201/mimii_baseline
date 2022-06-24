@@ -33,6 +33,7 @@ from keras.layers import Input, Dense
 
 
 import torch
+import torch.nn as nn
 from asteroid.models import XUMX
 import fast_bss_eval
 
@@ -348,6 +349,29 @@ def train_list_to_vector_array(file_list,
 
     return dataset
 
+class AEDataset(torch.utils.data.Dataset):
+    def __init__(self, 
+            sep_model, 
+            file_list,
+            param,
+            ):
+        self.sep_model = sep_model
+        self.file_list = file_list
+
+        self.data_vector = train_list_to_vector_array(self.file_list,
+                                            msg="generate train_dataset",
+                                            n_mels=param["feature"]["n_mels"],
+                                            frames=param["feature"]["frames"],
+                                            n_fft=param["feature"]["n_fft"],
+                                            hop_length=param["feature"]["hop_length"],
+                                            power=param["feature"]["power"])
+    
+    def __getitem__(self, index):
+        return torch.Tensor(self.data_vector[index, :])
+    
+    def __len__(self):
+        return self.data_vector.shape[0]
+
 
 def dataset_generator(target_dir,
                       normal_dir_name="normal",
@@ -440,6 +464,28 @@ def keras_model(inputDim):
     return Model(inputs=inputLayer, outputs=h)
 
 
+class TorchModel(nn.Module):
+    def __init__(self, dim_input):
+        super(TorchModel,self).__init__()
+        self.ff = nn.Sequential(
+            nn.Linear(dim_input, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 8),
+            nn.ReLU(),
+            nn.Linear(8, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, dim_input),
+        )
+
+    def forward(self, x):
+        x = self.ff(x)
+        return x
+
+
 ########################################################################
 
 
@@ -516,8 +562,10 @@ if __name__ == "__main__":
                 continue
             elif machine_id == 'id_04':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id4/checkpoints/epoch=48-step=1665.ckpt'
+                continue
             elif machine_id == 'id_06':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id6/checkpoints/epoch=78-step=2685.ckpt'
+                continue
         elif db == 'min6dB':
             if machine_id == 'id_00':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id0/checkpoints/epoch=58-step=3657.ckpt'
@@ -540,7 +588,7 @@ if __name__ == "__main__":
                 continue
             elif machine_id == 'id_04':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id4/checkpoints/epoch=51-step=1767.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_06':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id6/checkpoints/epoch=58-step=2005.ckpt'
                 continue
@@ -561,42 +609,54 @@ if __name__ == "__main__":
         # else:
         train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
 
-        train_data = train_list_to_vector_array(train_files,
-                                            msg="generate train_dataset",
-                                            n_mels=param["feature"]["n_mels"],
-                                            frames=param["feature"]["frames"],
-                                            n_fft=param["feature"]["n_fft"],
-                                            hop_length=param["feature"]["hop_length"],
-                                            power=param["feature"]["power"])
-
-        save_pickle(train_pickle, train_data)
+        train_dataset = AEDataset(sep_model, train_files, param)
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=param["fit"]["batch_size"], shuffle=True, drop_last=True
+        )
         save_pickle(eval_files_pickle, eval_files)
         save_pickle(eval_labels_pickle, eval_labels)
 
         # model training
         print("============== MODEL TRAINING ==============")
-        model = keras_model(param["feature"]["n_mels"] * param["feature"]["frames"])
-        model.summary()
+        dim_input = train_dataset.data_vector.shape[1]
+        model = TorchModel(dim_input).cuda()
+        optimizer = torch.optim.Adam(model.parameters(), lr=1.0e-3)
+        loss_fn = nn.MSELoss()
 
+        for epoch in range(param["fit"]["epochs"]):
+            losses = []
+            for batch in train_loader:
+                batch = batch.cuda()
+                pred = model(batch)
+                
+                loss = loss_fn(pred, batch)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                losses.append(loss.item())
+            if epoch % 10 == 0:
+                print(f"epoch {epoch}: loss {sum(losses) / len(losses)}")
+                
         # training
-        if os.path.exists(model_file):
-            model.load_weights(model_file)
-        else:
-            model.compile(**param["fit"]["compile"])
-            history = model.fit(train_data,
-                                train_data,
-                                epochs=param["fit"]["epochs"],
-                                batch_size=param["fit"]["batch_size"],
-                                shuffle=param["fit"]["shuffle"],
-                                validation_split=param["fit"]["validation_split"],
-                                verbose=param["fit"]["verbose"])
+        # if os.path.exists(model_file):
+        #     model.load_weights(model_file)
+        # else:
+        #     model.compile(**param["fit"]["compile"])
+        #     history = model.fit(train_data,
+        #                         train_data,
+        #                         epochs=param["fit"]["epochs"],
+        #                         batch_size=param["fit"]["batch_size"],
+        #                         shuffle=param["fit"]["shuffle"],
+        #                         validation_split=param["fit"]["validation_split"],
+        #                         verbose=param["fit"]["verbose"])
 
-            visualizer.loss_plot(history.history["loss"], history.history["val_loss"])
-            visualizer.save_figure(history_img)
-            model.save_weights(model_file)
+        #     visualizer.loss_plot(history.history["loss"], history.history["val_loss"])
+        #     visualizer.save_figure(history_img)
+        #     model.save_weights(model_file)
 
         # evaluation
         print("============== EVALUATION ==============")
+        model.eval()
         y_pred = numpy.array([0. for k in eval_labels])
         y_true = numpy.array(eval_labels)
 
@@ -630,8 +690,9 @@ if __name__ == "__main__":
                                         n_fft=param["feature"]["n_fft"],
                                         hop_length=param["feature"]["hop_length"],
                                         power=param["feature"]["power"])
-            error = numpy.mean(numpy.square(data - model.predict(data)), axis=1)
-            y_pred[num] = numpy.mean(error)
+            data = torch.Tensor(data).cuda()
+            error = torch.mean((data - model(data) ** 2), dim=1)
+            y_pred[num] = torch.mean(error).detach().cpu().numpy()
             if num <= 250:
                 for mt in machine_types:
                     eval_types[mt].append(num)
