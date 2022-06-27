@@ -64,49 +64,6 @@ logger.addHandler(handler)
 ########################################################################
 
 
-########################################################################
-# visualizer
-########################################################################
-class visualizer(object):
-    def __init__(self):
-        import matplotlib.pyplot as plt
-        self.plt = plt
-        self.fig = self.plt.figure(figsize=(30, 10))
-        self.plt.subplots_adjust(wspace=0.3, hspace=0.3)
-
-    def loss_plot(self, loss, val_loss):
-        """
-        Plot loss curve.
-
-        loss : list [ float ]
-            training loss time series.
-        val_loss : list [ float ]
-            validation loss time series.
-
-        return   : None
-        """
-        ax = self.fig.add_subplot(1, 1, 1)
-        ax.cla()
-        ax.plot(loss)
-        ax.plot(val_loss)
-        ax.set_title("Model loss")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss")
-        ax.legend(["Train", "Test"], loc="upper right")
-
-    def save_figure(self, name):
-        """
-        Save figure.
-
-        name : str
-            save .png file path.
-
-        return : None
-        """
-        self.plt.savefig(name)
-
-
-########################################################################
 
 
 ########################################################################
@@ -288,12 +245,6 @@ def xumx_model(path):
 
 
 machine_types = ['fan', 'pump', 'slider', 'valve']
-
-model_path = '/hdd/hdd1/sss/xumx/0617_5_vanilla_no_mute_6dB_id4/checkpoints/epoch=52-step=1801.ckpt'
-
-sep_model = xumx_model(model_path)
-sep_model.eval()
-sep_model = sep_model.cuda()
 
 
 def train_list_to_vector_array(file_list,
@@ -503,10 +454,6 @@ if __name__ == "__main__":
     os.makedirs(param["model_directory"], exist_ok=True)
     os.makedirs(param["result_directory"], exist_ok=True)
 
-    # initialize the visualizer
-    visualizer = visualizer()
-
-
     # load base_directory list
     dirs = sorted(glob.glob(os.path.abspath("{base}/*/fan/*".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
 
@@ -523,7 +470,6 @@ if __name__ == "__main__":
         db = os.path.split(os.path.split(os.path.split(target_dir)[0])[0])[1]
         machine_type = 'mix'
         machine_id = os.path.split(target_dir)[1]
-        # target_dir = target_dir.replace('fan', '*')
 
         # setup path
         evaluation_result = {}
@@ -611,7 +557,7 @@ if __name__ == "__main__":
 
         train_dataset = AEDataset(sep_model, train_files, param)
         train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=param["fit"]["batch_size"], shuffle=True, drop_last=True
+            train_dataset, batch_size=param["fit"]["batch_size"], shuffle=True,
         )
         save_pickle(eval_files_pickle, eval_files)
         save_pickle(eval_labels_pickle, eval_labels)
@@ -620,7 +566,7 @@ if __name__ == "__main__":
         print("============== MODEL TRAINING ==============")
         dim_input = train_dataset.data_vector.shape[1]
         model = TorchModel(dim_input).cuda()
-        optimizer = torch.optim.Adam(model.parameters(), lr=1.0e-3)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1.0e-4)
         loss_fn = nn.MSELoss()
 
         for epoch in range(param["fit"]["epochs"]):
@@ -628,8 +574,8 @@ if __name__ == "__main__":
             for batch in train_loader:
                 batch = batch.cuda()
                 pred = model(batch)
-                
                 loss = loss_fn(pred, batch)
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -650,8 +596,6 @@ if __name__ == "__main__":
         #                         validation_split=param["fit"]["validation_split"],
         #                         verbose=param["fit"]["verbose"])
 
-        #     visualizer.loss_plot(history.history["loss"], history.history["val_loss"])
-        #     visualizer.save_figure(history_img)
         #     model.save_weights(model_file)
 
         # evaluation
@@ -661,11 +605,6 @@ if __name__ == "__main__":
         y_true = numpy.array(eval_labels)
 
         eval_types = {mt: [] for mt in machine_types}
-        # ys = 0
-        # for machine in machine_types:
-        #     filename = file_list[idx].replace('fan', machine)
-        #     sr, y = file_to_wav(filename)
-        #     ys = ys + y
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
             machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
             target_idx = machine_types.index(machine_type)
@@ -691,7 +630,7 @@ if __name__ == "__main__":
                                         hop_length=param["feature"]["hop_length"],
                                         power=param["feature"]["power"])
             data = torch.Tensor(data).cuda()
-            error = torch.mean((data - model(data) ** 2), dim=1)
+            error = torch.mean(((data - model(data)) ** 2), dim=1)
             y_pred[num] = torch.mean(error).detach().cpu().numpy()
             if num <= 250:
                 for mt in machine_types:

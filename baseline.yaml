@@ -1,4 +1,4 @@
-base_directory : ./dataset
+base_directory : /dev/shm/mimii
 pickle_directory: ./pickle
 model_directory: ./model
 result_directory: ./result
