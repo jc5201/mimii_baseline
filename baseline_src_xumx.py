@@ -246,6 +246,7 @@ def xumx_model(path):
 
 
 machine_types = ['fan', 'pump', 'slider', 'valve']
+num_eval_normal = 250
 
 
 def train_list_to_vector_array(file_list,
@@ -254,7 +255,8 @@ def train_list_to_vector_array(file_list,
                          frames=5,
                          n_fft=1024,
                          hop_length=512,
-                         power=2.0):
+                         power=2.0,
+                         target_source=None):
     """
     convert the file_list to a vector array.
     file_to_vector_array() is iterated, and the output vector array is concatenated.
@@ -277,7 +279,10 @@ def train_list_to_vector_array(file_list,
 
         mixture_y = 0
         target_type = os.path.split(os.path.split(os.path.split(os.path.split(file_list[idx])[0])[0])[0])[1]
-        target_idx = machine_types.index(target_type)
+        if target_source is not None:
+            target_idx = machine_types.index(target_source)
+        else:
+            target_idx = machine_types.index(target_type)
         for machine in machine_types:
             filename = file_list[idx].replace(target_type, machine)
             sr, y = file_to_wav(filename)
@@ -306,9 +311,11 @@ class AEDataset(torch.utils.data.Dataset):
             sep_model, 
             file_list,
             param,
+            target_source=None,
             ):
         self.sep_model = sep_model
         self.file_list = file_list
+        self.target_source = target_source
 
         self.data_vector = train_list_to_vector_array(self.file_list,
                                             msg="generate train_dataset",
@@ -316,7 +323,9 @@ class AEDataset(torch.utils.data.Dataset):
                                             frames=param["feature"]["frames"],
                                             n_fft=param["feature"]["n_fft"],
                                             hop_length=param["feature"]["hop_length"],
-                                            power=param["feature"]["power"])
+                                            power=param["feature"]["power"],
+                                            target_source=target_source)
+        
     
     def __getitem__(self, index):
         return torch.Tensor(self.data_vector[index, :])
@@ -383,11 +392,11 @@ def dataset_generator(target_dir,
         logger.exception("no_wav_data!!")
 
     # 03 separate train & eval
-    num_eval_normal = 250
     train_files = normal_files[num_eval_normal:]
     train_labels = normal_labels[num_eval_normal:]
-    eval_files = numpy.concatenate((normal_files[:num_eval_normal], abnormal_files), axis=0)
-    eval_labels = numpy.concatenate((normal_labels[:num_eval_normal], abnormal_labels), axis=0)
+    eval_normal_files = sum([[fan_file.replace("fan", machine_type) for fan_file in normal_files[:num_eval_normal]] for machine_type in machine_types], [])
+    eval_files = numpy.concatenate((eval_normal_files, abnormal_files), axis=0)
+    eval_labels = numpy.concatenate((normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], abnormal_labels), axis=0)
     logger.info("train_file num : {num}".format(num=len(train_files)))
     logger.info("eval_file  num : {num}".format(num=len(eval_files)))
 
@@ -503,42 +512,42 @@ if __name__ == "__main__":
         if db == '0dB':
             if machine_id == 'id_00':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id0/checkpoints/epoch=91-step=5703.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_02':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id2/checkpoints/epoch=28-step=1304.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_04':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id4/checkpoints/epoch=48-step=1665.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_06':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id6/checkpoints/epoch=78-step=2685.ckpt'
-                continue
+                # continue
         elif db == 'min6dB':
             if machine_id == 'id_00':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id0/checkpoints/epoch=58-step=3657.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_02':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id2/checkpoints/epoch=98-step=4454.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_04':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id4/checkpoints/epoch=23-step=815.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_06':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id6/checkpoints/epoch=89-step=3059.ckpt'
-                continue
+                # continue
         else:
             if machine_id == 'id_00':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id0/checkpoints/epoch=55-step=3471.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_02':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id2/checkpoints/epoch=98-step=4454.ckpt'
-                continue
+                # continue
             elif machine_id == 'id_04':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id4/checkpoints/epoch=51-step=1767.ckpt'
                 # continue
             elif machine_id == 'id_06':
                 model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id6/checkpoints/epoch=58-step=2005.ckpt'
-                continue
+                # continue
         
 
         sep_model = xumx_model(model_path)
@@ -548,60 +557,48 @@ if __name__ == "__main__":
 
         # dataset generator
         print("============== DATASET_GENERATOR ==============")
-        # if os.path.exists(train_pickle):
-        #     # train_data = load_pickle(train_pickle)
-        #     # if os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
+        # if os.path.exists(train_pickle) and os.path.exists(eval_files_pickle) and os.path.exists(eval_labels_pickle):
+        #     train_files, train_labels = load_pickle(train_pickle)
         #     eval_files = load_pickle(eval_files_pickle)
         #     eval_labels = load_pickle(eval_labels_pickle)
         # else:
         train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
-
-        train_dataset = AEDataset(sep_model, train_files, param)
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=param["fit"]["batch_size"], shuffle=True,
-        )
+        save_pickle(train_pickle, [train_files, train_labels])
         save_pickle(eval_files_pickle, eval_files)
         save_pickle(eval_labels_pickle, eval_labels)
+        
+        model = {}
+        for target_type in machine_types:
 
-        # model training
-        print("============== MODEL TRAINING ==============")
-        dim_input = train_dataset.data_vector.shape[1]
-        model = TorchModel(dim_input).cuda()
-        optimizer = torch.optim.Adam(model.parameters(), lr=1.0e-4)
-        loss_fn = nn.MSELoss()
+            train_dataset = AEDataset(sep_model, train_files, param, target_source=target_type)
+            train_loader = torch.utils.data.DataLoader(
+                train_dataset, batch_size=param["fit"]["batch_size"], shuffle=True,
+            )
 
-        for epoch in range(param["fit"]["epochs"]):
-            losses = []
-            for batch in train_loader:
-                batch = batch.cuda()
-                pred = model(batch)
-                loss = loss_fn(pred, batch)
+            # model training
+            print("============== MODEL TRAINING ==============")
+            dim_input = train_dataset.data_vector.shape[1]
+            model[target_type] = TorchModel(dim_input).cuda()
+            optimizer = torch.optim.Adam(model[target_type].parameters(), lr=1.0e-4)
+            loss_fn = nn.MSELoss()
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                losses.append(loss.item())
-            if epoch % 10 == 0:
-                print(f"epoch {epoch}: loss {sum(losses) / len(losses)}")
-                
-        # training
-        # if os.path.exists(model_file):
-        #     model.load_weights(model_file)
-        # else:
-        #     model.compile(**param["fit"]["compile"])
-        #     history = model.fit(train_data,
-        #                         train_data,
-        #                         epochs=param["fit"]["epochs"],
-        #                         batch_size=param["fit"]["batch_size"],
-        #                         shuffle=param["fit"]["shuffle"],
-        #                         validation_split=param["fit"]["validation_split"],
-        #                         verbose=param["fit"]["verbose"])
+            for epoch in range(param["fit"]["epochs"]):
+                losses = []
+                for batch in train_loader:
+                    batch = batch.cuda()
+                    pred = model[target_type](batch)
+                    loss = loss_fn(pred, batch)
 
-        #     model.save_weights(model_file)
-
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    losses.append(loss.item())
+                if epoch % 10 == 0:
+                    print(f"epoch {epoch}: loss {sum(losses) / len(losses)}")
+            model[target_type].eval()
+               
         # evaluation
         print("============== EVALUATION ==============")
-        model.eval()
         y_pred = numpy.array([0. for k in eval_labels])
         y_true = numpy.array(eval_labels)
         sdr_pred_normal = {mt: [] for mt in machine_types}
@@ -628,7 +625,7 @@ if __name__ == "__main__":
             _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda())
             # [src, b, ch, time]
             ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
-
+            
             data = wav_to_vector_array(sr, ys,
                                         n_mels=param["feature"]["n_mels"],
                                         frames=param["feature"]["frames"],
@@ -636,20 +633,17 @@ if __name__ == "__main__":
                                         hop_length=param["feature"]["hop_length"],
                                         power=param["feature"]["power"])
             data = torch.Tensor(data).cuda()
-            error = torch.mean(((data - model(data)) ** 2), dim=1)
+            error = torch.mean(((data - model[machine_type](data)) ** 2), dim=1)
+
+            sep_sdr, _, _, _ = museval.evaluate(numpy.expand_dims(y_raw[machine_type][0, :ys.shape[0]], axis=(0,2)), 
+                                        numpy.expand_dims(ys, axis=(0,2)))
+
             y_pred[num] = torch.mean(error).detach().cpu().numpy()
-            if num <= 250:
-                y_raw_list = [numpy.expand_dims(y_raw[mt][0, :ys.shape[0]], axis=(0,2)) for mt in machine_types]
-                sep_sdr, _, _, _ = museval.evaluate(numpy.concatenate(y_raw_list, axis=0),
-                                                time[:, 0, :1, :].permute(0, 2, 1).detach().cpu().numpy())
-                for i, mt in enumerate(machine_types):
-                    eval_types[mt].append(num)
-                    sdr_pred_normal[mt].append(numpy.mean(sep_sdr[i, :]))
-            else:
-                eval_types[machine_type].append(num)
-                
-                sep_sdr, _, _, _ = museval.evaluate(numpy.expand_dims(y_raw[machine_type][0, :ys.shape[0]], axis=(0,2)), 
-                                            numpy.expand_dims(ys, axis=(0,2)))
+            eval_types[machine_type].append(num)
+
+            if num < num_eval_normal * 4: # normal file
+                sdr_pred_normal[machine_type].append(numpy.mean(sep_sdr))
+            else: # abnormal file
                 sdr_pred_abnormal[machine_type].append(numpy.mean(sep_sdr))
 
         scores = []
@@ -660,6 +654,8 @@ if __name__ == "__main__":
             scores.append(score)
             logger.info("SDR_normal_{} : {}".format(machine_type, sum(sdr_pred_normal[machine_type])/len(sdr_pred_normal[machine_type])))
             logger.info("SDR_abnormal_{} : {}".format(machine_type, sum(sdr_pred_abnormal[machine_type])/len(sdr_pred_abnormal[machine_type])))
+            evaluation_result["SDR_normal_{} : {}".format(machine_type)] = sum(sdr_pred_normal[machine_type])/len(sdr_pred_normal[machine_type])
+            evaluation_result["SDR_abnormal_{} : {}".format(machine_type)] = sum(sdr_pred_abnormal[machine_type])/len(sdr_pred_abnormal[machine_type])
         score = sum(scores) / len(scores)
         logger.info("AUC : {}".format(score))
         evaluation_result["AUC"] = float(score)
