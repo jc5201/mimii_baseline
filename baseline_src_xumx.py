@@ -36,6 +36,7 @@ import torch
 import torch.nn as nn
 from asteroid.models import XUMX
 import fast_bss_eval
+import museval
 
 from baseline_mix_xumx import xumx_model
 
@@ -603,11 +604,14 @@ if __name__ == "__main__":
         model.eval()
         y_pred = numpy.array([0. for k in eval_labels])
         y_true = numpy.array(eval_labels)
+        sdr_pred_normal = {mt: [] for mt in machine_types}
+        sdr_pred_abnormal = {mt: [] for mt in machine_types}
 
         eval_types = {mt: [] for mt in machine_types}
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
             machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
             target_idx = machine_types.index(machine_type)
+            y_raw = {}
             mixture_y = 0
             for normal_type in machine_types:
                 if normal_type == machine_type:
@@ -615,14 +619,16 @@ if __name__ == "__main__":
                 normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
                 sr, y = file_to_wav(normal_file_name)
                 mixture_y += y
+                y_raw[normal_type] = y
                 
             sr, y = file_to_wav(file_name)
             mixture_y += y
+            y_raw[machine_type] = y
 
             _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda())
             # [src, b, ch, time]
             ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
-        
+
             data = wav_to_vector_array(sr, ys,
                                         n_mels=param["feature"]["n_mels"],
                                         frames=param["feature"]["frames"],
@@ -633,10 +639,18 @@ if __name__ == "__main__":
             error = torch.mean(((data - model(data)) ** 2), dim=1)
             y_pred[num] = torch.mean(error).detach().cpu().numpy()
             if num <= 250:
-                for mt in machine_types:
+                y_raw_list = [numpy.expand_dims(y_raw[mt][0, :ys.shape[0]], axis=(0,2)) for mt in machine_types]
+                sep_sdr, _, _, _ = museval.evaluate(numpy.concatenate(y_raw_list, axis=0),
+                                                time[:, 0, :1, :].permute(0, 2, 1).detach().cpu().numpy())
+                for i, mt in enumerate(machine_types):
                     eval_types[mt].append(num)
+                    sdr_pred_normal[mt].append(numpy.mean(sep_sdr[i, :]))
             else:
                 eval_types[machine_type].append(num)
+                
+                sep_sdr, _, _, _ = museval.evaluate(numpy.expand_dims(y_raw[machine_type][0, :ys.shape[0]], axis=(0,2)), 
+                                            numpy.expand_dims(ys, axis=(0,2)))
+                sdr_pred_abnormal[machine_type].append(numpy.mean(sep_sdr))
 
         scores = []
         for machine_type in machine_types:
@@ -644,6 +658,8 @@ if __name__ == "__main__":
             logger.info("AUC_{} : {}".format(machine_type, score))
             evaluation_result["AUC_{}".format(machine_type)] = float(score)
             scores.append(score)
+            logger.info("SDR_normal_{} : {}".format(machine_type, sum(sdr_pred_normal[machine_type])/len(sdr_pred_normal[machine_type])))
+            logger.info("SDR_abnormal_{} : {}".format(machine_type, sum(sdr_pred_abnormal[machine_type])/len(sdr_pred_abnormal[machine_type])))
         score = sum(scores) / len(scores)
         logger.info("AUC : {}".format(score))
         evaluation_result["AUC"] = float(score)
