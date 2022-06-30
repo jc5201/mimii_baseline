@@ -49,7 +49,32 @@ machine_types = ['fan', 'slider', 'pump', 'valve']
 # feature extractor
 ########################################################################
 
-def train_list_to_mixture_waveform_array(file_list,
+def train_file_to_mixture_wav(filename):
+    machine_type = os.path.split(os.path.split(os.path.split(os.path.split(filename)[0])[0])[0])[1]
+    ys = 0
+    for machine in machine_types:
+        src_filename = filename.replace(machine_type, machine)
+        sr, y = file_to_wav_stereo(src_filename)
+        ys = ys + y
+
+    return sr, ys
+    
+def eval_file_to_mixture_wav(filename):
+    machine_type = os.path.split(os.path.split(os.path.split(os.path.split(filename)[0])[0])[0])[1]
+    ys = 0
+    gt_wav = {}
+    for normal_type in machine_types:
+        if normal_type == machine_type:
+            src_filename = filename
+        else:
+            src_filename = filename.replace(machine_type, normal_type).replace('abnormal', 'normal')
+        sr, y = file_to_wav_stereo(src_filename)
+        ys = ys + y
+        gt_wav[normal_type] = y
+    
+    return sr, ys, gt_wav
+
+def train_list_to_mixture_waveform_tensor(file_list,
                          msg="calc...",
                          n_mels=64,
                          frames=5,
@@ -73,11 +98,7 @@ def train_list_to_mixture_waveform_array(file_list,
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
 
-        ys = 0
-        for machine in machine_types:
-            filename = file_list[idx].replace('fan', machine)
-            sr, y = file_to_wav_stereo(filename)
-            ys = ys + y
+        sr, ys = train_file_to_mixture_wav(file_list[idx])
         
         vector_array = torch.Tensor(ys)
         # [ch, time]
@@ -335,22 +356,10 @@ if __name__ == "__main__":
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
             # try:
             machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
-            ys = 0
-            gt_wav = {}
-            for normal_type in machine_types:
-                if normal_type == machine_type:
-                    continue
-                normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
-                sr, y = demux_wav(normal_file_name, channel=2)
-                ys += y
-                gt_wav[normal_type] = y
-                
-            sr, y = demux_wav(file_name, channel=2)
-            ys += y
-            gt_wav[machine_type] = y
+
+            sr, ys, gt_wav = eval_file_to_mixture_wav(file_name)
 
             data = torch.Tensor(ys).cuda()
-            # 
 
             #
             t_data = data.unsqueeze(0)

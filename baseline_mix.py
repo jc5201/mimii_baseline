@@ -41,10 +41,35 @@ __versions__ = "1.0.3"
 
 
 machine_types = ['id_00', 'id_02']
+num_eval_normal = 250
 
 ########################################################################
 # feature extractor
 ########################################################################
+
+def train_file_to_mixture_wav(filename):
+    machine_type = os.path.split(os.path.split(os.path.split(filename)[0])[0])[1]
+    ys = 0
+    for machine in machine_types:
+        src_filename = filename.replace(machine_type, machine)
+        sr, y = demux_wav(src_filename)
+        ys = ys + y
+
+    return sr, ys
+    
+def eval_file_to_mixture_wav(filename):
+    machine_type = os.path.split(os.path.split(os.path.split(filename)[0])[0])[1]
+    ys = 0
+    for normal_type in machine_types:
+        if normal_type == machine_type:
+            src_filename = filename
+        else:
+            src_filename = filename.replace(machine_type, normal_type).replace('abnormal', 'normal')
+        sr, y = demux_wav(src_filename)
+        ys = ys + y
+    
+    return sr, ys
+
 
 def train_list_to_mixture_spec_vector_array(file_list,
                          msg="calc...",
@@ -71,11 +96,7 @@ def train_list_to_mixture_spec_vector_array(file_list,
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
 
-        ys = 0
-        for machine in machine_types:
-            filename = file_list[idx].replace('id_00', machine)
-            sr, y = demux_wav(filename)
-            ys = ys + y
+        sr, ys = train_file_to_mixture_wav(file_list[idx])
         
         vector_array = wav_to_spec_vector_array(sr, ys,
                                             n_mels=n_mels,
@@ -154,7 +175,6 @@ def dataset_generator(target_dir,
         logger.exception("no_wav_data!!")
 
     # 03 separate train & eval
-    num_eval_normal = 250
     train_files = normal_files[num_eval_normal:]
     train_labels = normal_labels[num_eval_normal:]
     eval_files = numpy.concatenate((normal_files[:num_eval_normal], abnormal_files), axis=0)
@@ -310,16 +330,8 @@ if __name__ == "__main__":
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
             try:
                 machine_type = os.path.split(os.path.split(os.path.split(file_name)[0])[0])[1]
-                ys = 0
-                for normal_type in machine_types:
-                    if normal_type == machine_type:
-                        continue
-                    normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
-                    sr, y = demux_wav(normal_file_name)
-                    ys += y
-                    
-                sr, y = demux_wav(file_name)
-                ys += y
+
+                sr, ys = eval_file_to_mixture_wav(file_name)
 
                 data = wav_to_spec_vector_array(sr, ys,
                                             n_mels=param["feature"]["n_mels"],
@@ -329,7 +341,7 @@ if __name__ == "__main__":
                                             power=param["feature"]["power"])
                 error = numpy.mean(numpy.square(data - model.predict(data)), axis=1)
                 y_pred[num] = numpy.mean(error)
-                if num <= 250:
+                if num < num_eval_normal:
                     for mt in machine_types:
                         eval_types[mt].append(num)
                 else:

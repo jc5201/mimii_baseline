@@ -26,8 +26,6 @@ import yaml
 # from import
 from tqdm import tqdm
 from sklearn import metrics
-from keras.models import Model
-from keras.layers import Input, Dense
 
 
 import torch
@@ -90,6 +88,49 @@ def xumx_model(path):
 # feature extractor
 ########################################################################
 
+def generate_label(y):
+    rms_fig = librosa.feature.rms(y)
+    rms_tensor = torch.tensor(rms_fig).reshape(1, -1, 1)
+    rms_trim = rms_tensor.expand(-1, -1, 512).reshape(1, -1)[:, :160000]
+
+    k = int(y.shape[1]*0.8)
+    min_threshold, _ = torch.kthvalue(rms_trim, k)
+    label = (rms_trim > min_threshold).type(torch.float)
+    label = label.expand(y.shape[0], -1)
+    return label
+
+
+def train_file_to_mixture_wav_label(filename):
+    machine_type = os.path.split(os.path.split(os.path.split(filename)[0])[0])[1]
+    ys = 0
+    active_label_sources = {}
+    for machine in machine_types:
+        src_filename = filename.replace(machine_type, machine)
+        sr, y = file_to_wav_stereo(src_filename)
+        active_label_sources[machine] = generate_label(y)
+        ys = ys + y
+
+    return sr, ys, active_label_sources
+
+
+def eval_file_to_mixture_wav_label(filename):
+    machine_type = os.path.split(os.path.split(os.path.split(filename)[0])[0])[1]
+    ys = 0
+    gt_wav = {}
+    active_label_sources = {}
+    for normal_type in machine_types:
+        if normal_type == machine_type:
+            src_filename = filename
+        else:
+            src_filename = filename.replace(machine_type, normal_type).replace('abnormal', 'normal')
+        sr, y = file_to_wav_stereo(src_filename)
+        ys = ys + y
+        active_label_sources[normal_type] = generate_label(y)
+        gt_wav[normal_type] = y
+    
+    return sr, ys, gt_wav, active_label_sources
+
+
 def train_list_to_mix_sep_spec_vector_array(file_list,
                          msg="calc...",
                          n_mels=64,
@@ -116,26 +157,17 @@ def train_list_to_mix_sep_spec_vector_array(file_list,
 
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
-        active_label_sources = {}
-        mixture_y = 0
         target_type = os.path.split(os.path.split(os.path.split(file_list[idx])[0])[0])[1]
-        if target_source is not None:
-            target_idx = machine_types.index(target_source)
-        else:
-            target_idx = machine_types.index(target_type)
-        for machine in machine_types:
-            filename = file_list[idx].replace(target_type, machine)
-            sr, y = file_to_wav_stereo(filename)
-            ##############################################################
-            #generate control signal 
-            label = generate_label(y)
-            active_label_sources[machine] = label
-            ##############################################################
-            mixture_y = mixture_y + y
+
+        sr, mixture_y, active_label_sources = train_file_to_mixture_wav_label(file_list[idx])
             
         active_labels = torch.stack([active_label_sources[src] for src in machine_types])
         _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda(), active_labels.unsqueeze(0).cuda())
         # [src, b, ch, time]
+        if target_source is not None:
+            target_idx = machine_types.index(target_source)
+        else:
+            target_idx = machine_types.index(target_type)
         ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
         
         vector_array = wav_to_spec_vector_array(sr, ys,
@@ -258,17 +290,6 @@ class TorchModel(nn.Module):
         x = self.ff(x)
         return x
 
-
-def generate_label(y):
-    rms_fig = librosa.feature.rms(y)
-    rms_tensor = torch.tensor(rms_fig).reshape(1, -1, 1)
-    rms_trim = rms_tensor.expand(-1, -1, 512).reshape(1, -1)[:, :160000]
-
-    k = int(y.shape[1]*0.8)
-    min_threshold, _ = torch.kthvalue(rms_trim, k)
-    label = (rms_trim > min_threshold).type(torch.float)
-    label = label.expand(y.shape[0], -1)
-    return label
 ########################################################################
 
 
@@ -397,24 +418,8 @@ if __name__ == "__main__":
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
             machine_type = os.path.split(os.path.split(os.path.split(file_name)[0])[0])[1]
             target_idx = machine_types.index(machine_type)
-            y_raw = {}
-            mixture_y = 0
-            active_label_sources = {}
-            for normal_type in machine_types:
-                if normal_type == machine_type:
-                    continue
-                normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
-                sr, y = file_to_wav_stereo(normal_file_name)
-                label = generate_label(y)
-                active_label_sources[normal_type] = label
-                mixture_y += y 
-                y_raw[normal_type] = y
 
-            sr, y = file_to_wav_stereo(file_name)
-            label = generate_label(y)
-            active_label_sources[machine_type] = label 
-            mixture_y += y
-            y_raw[machine_type] = y
+            sr, mixture_y, y_raw, active_label_sources = eval_file_to_mixture_wav_label(file_name)
 
             active_labels = torch.stack([active_label_sources[src] for src in machine_types])
             _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda(), active_labels.unsqueeze(0).cuda())
