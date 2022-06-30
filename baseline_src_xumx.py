@@ -34,12 +34,13 @@ from keras.layers import Input, Dense
 
 import torch
 import torch.nn as nn
-from asteroid.models import XUMX
+from asteroid.models import XUMX, XUMXControl
 import fast_bss_eval
 import museval
 
 from baseline_mix_xumx import xumx_model
 
+import numpy as np
 ########################################################################
 
 
@@ -65,8 +66,6 @@ logger.addHandler(handler)
 ########################################################################
 
 
-
-
 ########################################################################
 # file I/O
 ########################################################################
@@ -74,12 +73,10 @@ logger.addHandler(handler)
 def save_pickle(filename, save_data):
     """
     picklenize the data.
-
     filename : str
         pickle filename
     data : free datatype
         some data will be picklenized
-
     return : None
     """
     logger.info("save_pickle -> {}".format(filename))
@@ -90,10 +87,8 @@ def save_pickle(filename, save_data):
 def load_pickle(filename):
     """
     unpicklenize the data.
-
     filename : str
         pickle filename
-
     return : data
     """
     logger.info("load_pickle <- {}".format(filename))
@@ -106,14 +101,12 @@ def load_pickle(filename):
 def file_load(wav_name, mono=False):
     """
     load .wav file.
-
     wav_name : str
         target .wav file
     sampling_rate : int
         audio file sampling_rate
     mono : boolean
         When load a multi channels file and this param True, the returned data will be merged for mono data
-
     return : numpy.array( float )
     """
     try:
@@ -125,17 +118,13 @@ def file_load(wav_name, mono=False):
 def demux_wav(wav_name, channel=1):
     """
     demux .wav file.
-
     wav_name : str
         target .wav file
     channel : int
         target channel number
-
     return : numpy.array( float )
         demuxed mono data
-
     Enabled to read multiple sampling rates.
-
     Enabled even one channel.
     """
     try:
@@ -168,10 +157,8 @@ def wav_to_vector_array(sr, y,
                          power=2.0):
     """
     convert file_name to a vector array.
-
     file_name : str
         target .wav file
-
     return : numpy.array( numpy.array( float ) )
         vector array
         * dataset.shape = (dataset_size, fearture_vector_length)
@@ -219,7 +206,7 @@ class XUMXSystem(torch.nn.Module):
 
 def xumx_model(path):
     
-    x_unmix = XUMX(
+    x_unmix = XUMXControl(
         window_length=4096,
         input_mean=None,
         input_scale=None,
@@ -227,7 +214,7 @@ def xumx_model(path):
         hidden_size=512,
         in_chan=4096,
         n_hop=1024,
-        sources=["fan", "pump", "slider", "valve"],
+        sources=['id_00', 'id_02'],
         max_bin=bandwidth_to_max_bin(16000, 4096, 16000),
         bidirectional=True,
         sample_rate=16000,
@@ -245,7 +232,7 @@ def xumx_model(path):
     return system.model
 
 
-machine_types = ['fan', 'pump', 'slider', 'valve']
+machine_types = ['id_00', 'id_02']
 num_eval_normal = 250
 
 
@@ -260,13 +247,11 @@ def train_list_to_vector_array(file_list,
     """
     convert the file_list to a vector array.
     file_to_vector_array() is iterated, and the output vector array is concatenated.
-
     file_list : list [ str ]
         .wav filename list of dataset
     msg : str ( default = "calc..." )
         description for tqdm.
         this parameter will be input into "desc" param at tqdm.
-
     return : numpy.array( numpy.array( float ) )
         training dataset (when generate the validation data, this function is not used.)
         * dataset.shape = (total_dataset_size, feature_vector_length)
@@ -276,9 +261,9 @@ def train_list_to_vector_array(file_list,
 
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
-
+        active_label_sources = {}
         mixture_y = 0
-        target_type = os.path.split(os.path.split(os.path.split(os.path.split(file_list[idx])[0])[0])[0])[1]
+        target_type = os.path.split(os.path.split(os.path.split(file_list[idx])[0])[0])[1]
         if target_source is not None:
             target_idx = machine_types.index(target_source)
         else:
@@ -286,9 +271,15 @@ def train_list_to_vector_array(file_list,
         for machine in machine_types:
             filename = file_list[idx].replace(target_type, machine)
             sr, y = file_to_wav(filename)
+            ##############################################################
+            #generate control signal 
+            label = generate_label(y)
+            active_label_sources[machine] = label
+            ##############################################################
             mixture_y = mixture_y + y
-        
-        _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda())
+            
+        active_labels = torch.stack([active_label_sources[src] for src in machine_types])
+        _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda(), active_labels.unsqueeze(0).cuda())
         # [src, b, ch, time]
         ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
         
@@ -347,7 +338,6 @@ def dataset_generator(target_dir,
         directory name the abnormal data located in
     ext : str (default="wav")
         filename extension of audio files 
-
     return : 
         train_data : numpy.array( numpy.array( float ) )
             training dataset
@@ -370,13 +360,14 @@ def dataset_generator(target_dir,
     normal_files = sorted(glob.glob(
         os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir,
                                                                  normal_dir_name=normal_dir_name,
-                                                                 ext=ext))))
+                                                                ext=ext))))
     normal_len = [len(glob.glob(
-        os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir.replace('fan', mt),
+        os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', mt),
                                                                  normal_dir_name=normal_dir_name,
-                                                                 ext=ext)))) for mt in machine_types]
+                                                                 ext=ext)))) for mt in machine_types]   #dataset 중에서 가장 짧은 것 기준
     normal_len = min(min(normal_len), len(normal_files))
     normal_files = normal_files[:normal_len]
+
 
     normal_labels = numpy.zeros(len(normal_files))
     if len(normal_files) == 0:
@@ -384,9 +375,13 @@ def dataset_generator(target_dir,
 
     # 02 abnormal list generate
     abnormal_files = sorted(glob.glob(
-        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('fan', '*'),
+        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir,
                                                                    abnormal_dir_name=abnormal_dir_name,
                                                                    ext=ext))))
+    abnormal_files.extend(sorted(glob.glob(
+        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', 'id_02'),
+                                                                   abnormal_dir_name=abnormal_dir_name,
+                                                                 ext=ext)))))                                               
     abnormal_labels = numpy.ones(len(abnormal_files))
     if len(abnormal_files) == 0:
         logger.exception("no_wav_data!!")
@@ -424,7 +419,6 @@ def keras_model(inputDim):
 
     return Model(inputs=inputLayer, outputs=h)
 
-
 class TorchModel(nn.Module):
     def __init__(self, dim_input):
         super(TorchModel,self).__init__()
@@ -447,6 +441,16 @@ class TorchModel(nn.Module):
         return x
 
 
+def generate_label(y):
+    rms_fig = librosa.feature.rms(y)
+    rms_tensor = torch.tensor(rms_fig).reshape(1, -1, 1)
+    rms_trim = rms_tensor.expand(-1, -1, 512).reshape(1, -1)[:, :160000]
+
+    k = int(y.shape[1]*0.8)
+    min_threshold, _ = torch.kthvalue(rms_trim, k)
+    label = (rms_trim > min_threshold).type(torch.float)
+    label = label.expand(y.shape[0], -1)
+    return label
 ########################################################################
 
 
@@ -464,9 +468,9 @@ if __name__ == "__main__":
     os.makedirs(param["model_directory"], exist_ok=True)
     os.makedirs(param["result_directory"], exist_ok=True)
 
-    # load base_directory list
-    dirs = sorted(glob.glob(os.path.abspath("{base}/*/fan/*".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
 
+    # load base_directory list
+    dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/valve/id_00".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
     # setup the result
     result_file = "{result}/{file_name}".format(result=param["result_directory"], file_name=param["result_file"])
     results = {}
@@ -479,7 +483,8 @@ if __name__ == "__main__":
         # dataset param        
         db = os.path.split(os.path.split(os.path.split(target_dir)[0])[0])[1]
         machine_type = 'mix'
-        machine_id = os.path.split(target_dir)[1]
+        machine_id = os.path.split(target_dir)[1]  ##TODO: machine id 고치기
+        # target_dir = target_dir.replace('fan', '*')
 
         # setup path
         evaluation_result = {}
@@ -507,48 +512,9 @@ if __name__ == "__main__":
         evaluation_result_key = "{machine_type}_{machine_id}_{db}".format(machine_type=machine_type,
                                                                           machine_id=machine_id,
                                                                           db=db)
+   
 
-
-        if db == '0dB':
-            if machine_id == 'id_00':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id0/checkpoints/epoch=91-step=5703.ckpt'
-                # continue
-            elif machine_id == 'id_02':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id2/checkpoints/epoch=28-step=1304.ckpt'
-                # continue
-            elif machine_id == 'id_04':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id4/checkpoints/epoch=48-step=1665.ckpt'
-                # continue
-            elif machine_id == 'id_06':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_0dB_id6/checkpoints/epoch=78-step=2685.ckpt'
-                # continue
-        elif db == 'min6dB':
-            if machine_id == 'id_00':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id0/checkpoints/epoch=58-step=3657.ckpt'
-                # continue
-            elif machine_id == 'id_02':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id2/checkpoints/epoch=98-step=4454.ckpt'
-                # continue
-            elif machine_id == 'id_04':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id4/checkpoints/epoch=23-step=815.ckpt'
-                # continue
-            elif machine_id == 'id_06':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_min6dB_id6/checkpoints/epoch=89-step=3059.ckpt'
-                # continue
-        else:
-            if machine_id == 'id_00':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id0/checkpoints/epoch=55-step=3471.ckpt'
-                # continue
-            elif machine_id == 'id_02':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id2/checkpoints/epoch=98-step=4454.ckpt'
-                # continue
-            elif machine_id == 'id_04':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id4/checkpoints/epoch=51-step=1767.ckpt'
-                # continue
-            elif machine_id == 'id_06':
-                model_path = '/hdd/hdd1/sss/xumx/0619_vanilla_6dB_id6/checkpoints/epoch=58-step=2005.ckpt'
-                # continue
-        
+        model_path = '/home/lyj/asteroid/egs/mimii/X-UMX/output_w_cont_task_test/checkpoints/epoch=985-step=44369.ckpt'
 
         sep_model = xumx_model(model_path)
         sep_model.eval()
@@ -605,24 +571,35 @@ if __name__ == "__main__":
         sdr_pred_abnormal = {mt: [] for mt in machine_types}
 
         eval_types = {mt: [] for mt in machine_types}
+        # ys = 0
+        # for machine in machine_types:
+        #     filename = file_list[idx].replace('fan', machine)
+        #     sr, y = file_to_wav(filename)
+        #     ys = ys + y
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
-            machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
+            machine_type = os.path.split(os.path.split(os.path.split(file_name)[0])[0])[1]
             target_idx = machine_types.index(machine_type)
             y_raw = {}
             mixture_y = 0
+            active_label_sources = {}
             for normal_type in machine_types:
                 if normal_type == machine_type:
                     continue
                 normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
                 sr, y = file_to_wav(normal_file_name)
-                mixture_y += y
+                label = generate_label(y)
+                active_label_sources[normal_type] = label
+                mixture_y += y 
                 y_raw[normal_type] = y
-                
+
             sr, y = file_to_wav(file_name)
+            label = generate_label(y)
+            active_label_sources[machine_type] = label 
             mixture_y += y
             y_raw[machine_type] = y
 
-            _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda())
+            active_labels = torch.stack([active_label_sources[src] for src in machine_types])
+            _, time = sep_model(torch.Tensor(mixture_y).unsqueeze(0).cuda(), active_labels.unsqueeze(0).cuda())
             # [src, b, ch, time]
             ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
             
@@ -668,4 +645,3 @@ if __name__ == "__main__":
     with open(result_file, "w") as f:
         f.write(yaml.dump(results, default_flow_style=False))
     print("===========================")
-########################################################################
