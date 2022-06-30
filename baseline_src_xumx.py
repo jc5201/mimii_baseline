@@ -563,7 +563,7 @@ if __name__ == "__main__":
         #     eval_labels = load_pickle(eval_labels_pickle)
         # else:
         train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
-        save_pickle(train_pickle, [train_files, train_labels])
+        save_pickle(train_pickle, (train_files, train_labels))
         save_pickle(eval_files_pickle, eval_files)
         save_pickle(eval_labels_pickle, eval_labels)
         
@@ -654,8 +654,8 @@ if __name__ == "__main__":
             scores.append(score)
             logger.info("SDR_normal_{} : {}".format(machine_type, sum(sdr_pred_normal[machine_type])/len(sdr_pred_normal[machine_type])))
             logger.info("SDR_abnormal_{} : {}".format(machine_type, sum(sdr_pred_abnormal[machine_type])/len(sdr_pred_abnormal[machine_type])))
-            evaluation_result["SDR_normal_{} : {}".format(machine_type)] = sum(sdr_pred_normal[machine_type])/len(sdr_pred_normal[machine_type])
-            evaluation_result["SDR_abnormal_{} : {}".format(machine_type)] = sum(sdr_pred_abnormal[machine_type])/len(sdr_pred_abnormal[machine_type])
+            evaluation_result["SDR_normal_{}".format(machine_type)] = float(sum(sdr_pred_normal[machine_type])/len(sdr_pred_normal[machine_type]))
+            evaluation_result["SDR_abnormal_{}".format(machine_type)] = float(sum(sdr_pred_abnormal[machine_type])/len(sdr_pred_abnormal[machine_type]))
         score = sum(scores) / len(scores)
         logger.info("AUC : {}".format(score))
         evaluation_result["AUC"] = float(score)
