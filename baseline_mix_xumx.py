@@ -32,6 +32,7 @@ from asteroid.models import XUMX
 import fast_bss_eval
 
 from utils import *
+from model import xumx_model
 ########################################################################
 
 
@@ -178,43 +179,6 @@ def dataset_generator(target_dir,
     logger.info("eval_file  num : {num}".format(num=len(eval_files)))
 
     return train_files, train_labels, eval_files, eval_labels
-
-
-########################################################################
-
-
-class XUMXSystem(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = None
-
-
-def xumx_model(path):
-    
-    x_unmix = XUMX(
-        window_length=4096,
-        input_mean=None,
-        input_scale=None,
-        nb_channels=2,
-        hidden_size=512,
-        in_chan=4096,
-        n_hop=1024,
-        sources=["fan", "pump", "slider", "valve"],
-        max_bin=bandwidth_to_max_bin(16000, 4096, 16000),
-        bidirectional=True,
-        sample_rate=16000,
-        spec_power=1,
-        return_time_signals=True,
-    )
-
-    conf = torch.load(path, map_location="cpu")
-
-    system = XUMXSystem()
-    system.model = x_unmix
-
-    system.load_state_dict(conf['state_dict'], strict=False)
-
-    return system.model
 
 
 
