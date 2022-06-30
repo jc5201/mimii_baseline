@@ -68,12 +68,10 @@ class visualizer(object):
     def loss_plot(self, loss, val_loss):
         """
         Plot loss curve.
-
         loss : list [ float ]
             training loss time series.
         val_loss : list [ float ]
             validation loss time series.
-
         return   : None
         """
         ax = self.fig.add_subplot(1, 1, 1)
@@ -88,10 +86,8 @@ class visualizer(object):
     def save_figure(self, name):
         """
         Save figure.
-
         name : str
             save .png file path.
-
         return : None
         """
         self.plt.savefig(name)
@@ -107,12 +103,10 @@ class visualizer(object):
 def save_pickle(filename, save_data):
     """
     picklenize the data.
-
     filename : str
         pickle filename
     data : free datatype
         some data will be picklenized
-
     return : None
     """
     logger.info("save_pickle -> {}".format(filename))
@@ -123,10 +117,8 @@ def save_pickle(filename, save_data):
 def load_pickle(filename):
     """
     unpicklenize the data.
-
     filename : str
         pickle filename
-
     return : data
     """
     logger.info("load_pickle <- {}".format(filename))
@@ -139,14 +131,12 @@ def load_pickle(filename):
 def file_load(wav_name, mono=False):
     """
     load .wav file.
-
     wav_name : str
         target .wav file
     sampling_rate : int
         audio file sampling_rate
     mono : boolean
         When load a multi channels file and this param True, the returned data will be merged for mono data
-
     return : numpy.array( float )
     """
     try:
@@ -158,17 +148,13 @@ def file_load(wav_name, mono=False):
 def demux_wav(wav_name, channel=0):
     """
     demux .wav file.
-
     wav_name : str
         target .wav file
     channel : int
         target channel number
-
     return : numpy.array( float )
         demuxed mono data
-
     Enabled to read multiple sampling rates.
-
     Enabled even one channel.
     """
     try:
@@ -196,10 +182,8 @@ def file_to_vector_array(file_name,
                          power=2.0):
     """
     convert file_name to a vector array.
-
     file_name : str
         target .wav file
-
     return : numpy.array( numpy.array( float ) )
         vector array
         * dataset.shape = (dataset_size, fearture_vector_length)
@@ -244,13 +228,11 @@ def list_to_vector_array(file_list,
     """
     convert the file_list to a vector array.
     file_to_vector_array() is iterated, and the output vector array is concatenated.
-
     file_list : list [ str ]
         .wav filename list of dataset
     msg : str ( default = "calc..." )
         description for tqdm.
         this parameter will be input into "desc" param at tqdm.
-
     return : numpy.array( numpy.array( float ) )
         training dataset (when generate the validation data, this function is not used.)
         * dataset.shape = (total_dataset_size, feature_vector_length)
@@ -289,7 +271,6 @@ def dataset_generator(target_dir,
         directory name the abnormal data located in
     ext : str (default="wav")
         filename extension of audio files 
-
     return : 
         train_data : numpy.array( numpy.array( float ) )
             training dataset
@@ -320,7 +301,7 @@ def dataset_generator(target_dir,
     abnormal_files = sorted(glob.glob(
         os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir,
                                                                    abnormal_dir_name=abnormal_dir_name,
-                                                                   ext=ext))))
+                                                                   ext=ext))))                              
     abnormal_labels = numpy.ones(len(abnormal_files))
     if len(abnormal_files) == 0:
         logger.exception("no_wav_data!!")
@@ -379,7 +360,7 @@ if __name__ == "__main__":
     visualizer = visualizer()
 
     # load base_directory list
-    dirs = sorted(glob.glob(os.path.abspath("{base}/*/*/*".format(base=param["base_directory"]))))
+    dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/valve/id_02".format(base=param["base_directory"]))))
 
     # setup the result
     result_file = "{result}/{file_name}".format(result=param["result_directory"], file_name=param["result_file"])

@@ -68,12 +68,10 @@ class visualizer(object):
     def loss_plot(self, loss, val_loss):
         """
         Plot loss curve.
-
         loss : list [ float ]
             training loss time series.
         val_loss : list [ float ]
             validation loss time series.
-
         return   : None
         """
         ax = self.fig.add_subplot(1, 1, 1)
@@ -88,10 +86,8 @@ class visualizer(object):
     def save_figure(self, name):
         """
         Save figure.
-
         name : str
             save .png file path.
-
         return : None
         """
         self.plt.savefig(name)
@@ -107,12 +103,10 @@ class visualizer(object):
 def save_pickle(filename, save_data):
     """
     picklenize the data.
-
     filename : str
         pickle filename
     data : free datatype
         some data will be picklenized
-
     return : None
     """
     logger.info("save_pickle -> {}".format(filename))
@@ -123,10 +117,8 @@ def save_pickle(filename, save_data):
 def load_pickle(filename):
     """
     unpicklenize the data.
-
     filename : str
         pickle filename
-
     return : data
     """
     logger.info("load_pickle <- {}".format(filename))
@@ -139,14 +131,12 @@ def load_pickle(filename):
 def file_load(wav_name, mono=False):
     """
     load .wav file.
-
     wav_name : str
         target .wav file
     sampling_rate : int
         audio file sampling_rate
     mono : boolean
         When load a multi channels file and this param True, the returned data will be merged for mono data
-
     return : numpy.array( float )
     """
     try:
@@ -158,17 +148,13 @@ def file_load(wav_name, mono=False):
 def demux_wav(wav_name, channel=0):
     """
     demux .wav file.
-
     wav_name : str
         target .wav file
     channel : int
         target channel number
-
     return : numpy.array( float )
         demuxed mono data
-
     Enabled to read multiple sampling rates.
-
     Enabled even one channel.
     """
     try:
@@ -201,10 +187,8 @@ def wav_to_vector_array(sr, y,
                          power=2.0):
     """
     convert file_name to a vector array.
-
     file_name : str
         target .wav file
-
     return : numpy.array( numpy.array( float ) )
         vector array
         * dataset.shape = (dataset_size, fearture_vector_length)
@@ -248,13 +232,11 @@ def train_list_to_vector_array(file_list,
     """
     convert the file_list to a vector array.
     file_to_vector_array() is iterated, and the output vector array is concatenated.
-
     file_list : list [ str ]
         .wav filename list of dataset
     msg : str ( default = "calc..." )
         description for tqdm.
         this parameter will be input into "desc" param at tqdm.
-
     return : numpy.array( numpy.array( float ) )
         training dataset (when generate the validation data, this function is not used.)
         * dataset.shape = (total_dataset_size, feature_vector_length)
@@ -265,10 +247,10 @@ def train_list_to_vector_array(file_list,
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
 
-        machine_types = ['fan', 'slider', 'pump', 'valve']
+        machine_types = ['id_00', 'id_02']
         ys = 0
         for machine in machine_types:
-            filename = file_list[idx].replace('fan', machine)
+            filename = file_list[idx].replace('id_00', machine)
             sr, y = file_to_wav(filename)
             ys = ys + y
         
@@ -300,7 +282,6 @@ def dataset_generator(target_dir,
         directory name the abnormal data located in
     ext : str (default="wav")
         filename extension of audio files 
-
     return : 
         train_data : numpy.array( numpy.array( float ) )
             training dataset
@@ -320,13 +301,13 @@ def dataset_generator(target_dir,
     logger.info("target_dir : {}".format(target_dir))
 
     # 01 normal list generate
-    machine_types = ['fan', 'slider', 'pump', 'valve']
+    machine_types = ['id_00', 'id_02']
     normal_files = sorted(glob.glob(
         os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir,
                                                                  normal_dir_name=normal_dir_name,
                                                                  ext=ext))))
     normal_len = [len(glob.glob(
-        os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir.replace('fan', mt),
+        os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', mt),
                                                                  normal_dir_name=normal_dir_name,
                                                                  ext=ext)))) for mt in machine_types]
     normal_len = min(min(normal_len), len(normal_files))
@@ -338,9 +319,14 @@ def dataset_generator(target_dir,
 
     # 02 abnormal list generate
     abnormal_files = sorted(glob.glob(
-        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('fan', '*'),
+        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir,
                                                                    abnormal_dir_name=abnormal_dir_name,
                                                                    ext=ext))))
+    abnormal_files.extend(sorted(glob.glob(
+        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', 'id_02'),
+                                                                   abnormal_dir_name=abnormal_dir_name,
+                                                                 ext=ext)))))         
+
     abnormal_labels = numpy.ones(len(abnormal_files))
     if len(abnormal_files) == 0:
         logger.exception("no_wav_data!!")
@@ -399,10 +385,10 @@ if __name__ == "__main__":
     # initialize the visualizer
     visualizer = visualizer()
 
-    machine_types = ['fan', 'slider', 'pump', 'valve']
+    machine_types = ['id_00', 'id_02']
 
     # load base_directory list
-    dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/fan/id_04".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
+    dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/valve/id_00".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
 
     # setup the result
     result_file = "{result}/{file_name}".format(result=param["result_directory"], file_name=param["result_file"])
@@ -495,7 +481,7 @@ if __name__ == "__main__":
         y_pred = numpy.array([0. for k in eval_labels])
         y_true = numpy.array(eval_labels)
 
-        machine_types = ['fan', 'slider', 'pump', 'valve']
+        machine_types = ['id_00', 'id_02']
         eval_types = {mt: [] for mt in machine_types}
         # ys = 0
         # for machine in machine_types:
@@ -504,7 +490,7 @@ if __name__ == "__main__":
         #     ys = ys + y
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
             try:
-                machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]
+                machine_type = os.path.split(os.path.split(os.path.split(file_name)[0])[0])[1]
                 ys = 0
                 for normal_type in machine_types:
                     if normal_type == machine_type:
