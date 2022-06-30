@@ -9,7 +9,6 @@
 ########################################################################
 # import default python-library
 ########################################################################
-import pickle
 import os
 import sys
 import glob
@@ -24,7 +23,6 @@ import librosa
 import librosa.core
 import librosa.feature
 import yaml
-import logging
 # from import
 from tqdm import tqdm
 from sklearn import metrics
@@ -41,6 +39,7 @@ import museval
 from baseline_mix_xumx import xumx_model
 
 import numpy as np
+from utils import *
 ########################################################################
 
 
@@ -50,152 +49,8 @@ import numpy as np
 __versions__ = "1.0.3"
 ########################################################################
 
-
-########################################################################
-# setup STD I/O
-########################################################################
-"""
-Standard output is logged in "baseline.log".
-"""
-logging.basicConfig(level=logging.DEBUG, filename="baseline.log")
-logger = logging.getLogger(' ')
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-########################################################################
-
-
-########################################################################
-# file I/O
-########################################################################
-# pickle I/O
-def save_pickle(filename, save_data):
-    """
-    picklenize the data.
-    filename : str
-        pickle filename
-    data : free datatype
-        some data will be picklenized
-    return : None
-    """
-    logger.info("save_pickle -> {}".format(filename))
-    with open(filename, 'wb') as sf:
-        pickle.dump(save_data, sf)
-
-
-def load_pickle(filename):
-    """
-    unpicklenize the data.
-    filename : str
-        pickle filename
-    return : data
-    """
-    logger.info("load_pickle <- {}".format(filename))
-    with open(filename, 'rb') as lf:
-        load_data = pickle.load(lf)
-    return load_data
-
-
-# wav file Input
-def file_load(wav_name, mono=False):
-    """
-    load .wav file.
-    wav_name : str
-        target .wav file
-    sampling_rate : int
-        audio file sampling_rate
-    mono : boolean
-        When load a multi channels file and this param True, the returned data will be merged for mono data
-    return : numpy.array( float )
-    """
-    try:
-        return librosa.load(wav_name, sr=None, mono=mono)
-    except:
-        logger.error("file_broken or not exists!! : {}".format(wav_name))
-
-
-def demux_wav(wav_name, channel=1):
-    """
-    demux .wav file.
-    wav_name : str
-        target .wav file
-    channel : int
-        target channel number
-    return : numpy.array( float )
-        demuxed mono data
-    Enabled to read multiple sampling rates.
-    Enabled even one channel.
-    """
-    try:
-        multi_channel_data, sr = file_load(wav_name)
-        if multi_channel_data.ndim <= 1:
-            return sr, multi_channel_data
-
-        return sr, numpy.array(multi_channel_data)[:channel, :]
-
-    except ValueError as msg:
-        logger.warning(f'{msg}')
-
-
-########################################################################
-
-
-########################################################################
-# feature extractor
-########################################################################
-
-def file_to_wav(file_name):
-    sr, y = demux_wav(file_name, channel=2)
-    return sr, y
-
-def wav_to_vector_array(sr, y,
-                         n_mels=64,
-                         frames=5,
-                         n_fft=1024,
-                         hop_length=512,
-                         power=2.0):
-    """
-    convert file_name to a vector array.
-    file_name : str
-        target .wav file
-    return : numpy.array( numpy.array( float ) )
-        vector array
-        * dataset.shape = (dataset_size, fearture_vector_length)
-    """
-    # 01 calculate the number of dimensions
-    dims = n_mels * frames
-
-    # 02 generate melspectrogram using librosa (**kwargs == param["librosa"])
-    mel_spectrogram = librosa.feature.melspectrogram(y=y,
-                                                     sr=sr,
-                                                     n_fft=n_fft,
-                                                     hop_length=hop_length,
-                                                     n_mels=n_mels,
-                                                     power=power)
-
-    # 03 convert melspectrogram to log mel energy
-    log_mel_spectrogram = 20.0 / power * numpy.log10(mel_spectrogram + sys.float_info.epsilon)
-
-    # 04 calculate total vector size
-    vectorarray_size = len(log_mel_spectrogram[0, :]) - frames + 1
-
-    # 05 skip too short clips
-    if vectorarray_size < 1:
-        return numpy.empty((0, dims), float)
-
-    # 06 generate feature vectors by concatenating multi_frames
-    vectorarray = numpy.zeros((vectorarray_size, dims), float)
-    for t in range(frames):
-        vectorarray[:, n_mels * t: n_mels * (t + 1)] = log_mel_spectrogram[:, t: t + vectorarray_size].T
-
-    return vectorarray
-
-
-def bandwidth_to_max_bin(rate, n_fft, bandwidth):
-    freqs = numpy.linspace(0, float(rate) / 2, n_fft // 2 + 1, endpoint=True)
-
-    return numpy.max(numpy.where(freqs <= bandwidth)[0]) + 1
+machine_types = ['id_00', 'id_02']
+num_eval_normal = 250
 
 
 class XUMXSystem(torch.nn.Module):
@@ -231,18 +86,18 @@ def xumx_model(path):
 
     return system.model
 
+########################################################################
+# feature extractor
+########################################################################
 
-machine_types = ['id_00', 'id_02']
-num_eval_normal = 250
-
-
-def train_list_to_vector_array(file_list,
+def train_list_to_mix_sep_spec_vector_array(file_list,
                          msg="calc...",
                          n_mels=64,
                          frames=5,
                          n_fft=1024,
                          hop_length=512,
                          power=2.0,
+                         sep_model=None,
                          target_source=None):
     """
     convert the file_list to a vector array.
@@ -270,7 +125,7 @@ def train_list_to_vector_array(file_list,
             target_idx = machine_types.index(target_type)
         for machine in machine_types:
             filename = file_list[idx].replace(target_type, machine)
-            sr, y = file_to_wav(filename)
+            sr, y = file_to_wav_stereo(filename)
             ##############################################################
             #generate control signal 
             label = generate_label(y)
@@ -283,7 +138,7 @@ def train_list_to_vector_array(file_list,
         # [src, b, ch, time]
         ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
         
-        vector_array = wav_to_vector_array(sr, ys,
+        vector_array = wav_to_spec_vector_array(sr, ys,
                                             n_mels=n_mels,
                                             frames=frames,
                                             n_fft=n_fft,
@@ -308,13 +163,14 @@ class AEDataset(torch.utils.data.Dataset):
         self.file_list = file_list
         self.target_source = target_source
 
-        self.data_vector = train_list_to_vector_array(self.file_list,
+        self.data_vector = train_list_to_mix_sep_spec_vector_array(self.file_list,
                                             msg="generate train_dataset",
                                             n_mels=param["feature"]["n_mels"],
                                             frames=param["feature"]["frames"],
                                             n_fft=param["feature"]["n_fft"],
                                             hop_length=param["feature"]["hop_length"],
                                             power=param["feature"]["power"],
+                                            sep_model=sep_model,
                                             target_source=target_source)
         
     
@@ -329,30 +185,6 @@ def dataset_generator(target_dir,
                       normal_dir_name="normal",
                       abnormal_dir_name="abnormal",
                       ext="wav"):
-    """
-    target_dir : str
-        base directory path of the dataset
-    normal_dir_name : str (default="normal")
-        directory name the normal data located in
-    abnormal_dir_name : str (default="abnormal")
-        directory name the abnormal data located in
-    ext : str (default="wav")
-        filename extension of audio files 
-    return : 
-        train_data : numpy.array( numpy.array( float ) )
-            training dataset
-            * dataset.shape = (total_dataset_size, feature_vector_length)
-        train_files : list [ str ]
-            file list for training
-        train_labels : list [ boolean ] 
-            label info. list for training
-            * normal/abnormal = 0/1
-        eval_files : list [ str ]
-            file list for evaluation
-        eval_labels : list [ boolean ] 
-            label info. list for evaluation
-            * normal/abnormal = 0/1
-    """
 
     logger.info("target_dir : {}".format(target_dir))
 
@@ -402,22 +234,8 @@ def dataset_generator(target_dir,
 
 
 ########################################################################
-# keras model
+# model
 ########################################################################
-def keras_model(inputDim):
-    """
-    define the keras model
-    the model based on the simple dense auto encoder (64*64*8*64*64)
-    """
-    inputLayer = Input(shape=(inputDim,))
-    h = Dense(64, activation="relu")(inputLayer)
-    h = Dense(64, activation="relu")(h)
-    h = Dense(8, activation="relu")(h)
-    h = Dense(64, activation="relu")(h)
-    h = Dense(64, activation="relu")(h)
-    h = Dense(inputDim, activation=None)(h)
-
-    return Model(inputs=inputLayer, outputs=h)
 
 class TorchModel(nn.Module):
     def __init__(self, dim_input):
@@ -586,13 +404,13 @@ if __name__ == "__main__":
                 if normal_type == machine_type:
                     continue
                 normal_file_name = file_name.replace(machine_type, normal_type).replace('abnormal', 'normal')
-                sr, y = file_to_wav(normal_file_name)
+                sr, y = file_to_wav_stereo(normal_file_name)
                 label = generate_label(y)
                 active_label_sources[normal_type] = label
                 mixture_y += y 
                 y_raw[normal_type] = y
 
-            sr, y = file_to_wav(file_name)
+            sr, y = file_to_wav_stereo(file_name)
             label = generate_label(y)
             active_label_sources[machine_type] = label 
             mixture_y += y
@@ -603,7 +421,7 @@ if __name__ == "__main__":
             # [src, b, ch, time]
             ys = time[target_idx, 0, 0, :].detach().cpu().numpy()
             
-            data = wav_to_vector_array(sr, ys,
+            data = wav_to_spec_vector_array(sr, ys,
                                         n_mels=param["feature"]["n_mels"],
                                         frames=param["feature"]["frames"],
                                         n_fft=param["feature"]["n_fft"],

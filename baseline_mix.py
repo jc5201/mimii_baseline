@@ -9,7 +9,6 @@
 ########################################################################
 # import default python-library
 ########################################################################
-import pickle
 import os
 import sys
 import glob
@@ -24,12 +23,13 @@ import librosa
 import librosa.core
 import librosa.feature
 import yaml
-import logging
 # from import
 from tqdm import tqdm
 from sklearn import metrics
 from keras.models import Model
 from keras.layers import Input, Dense
+
+from utils import *
 ########################################################################
 
 
@@ -40,189 +40,13 @@ __versions__ = "1.0.3"
 ########################################################################
 
 
-########################################################################
-# setup STD I/O
-########################################################################
-"""
-Standard output is logged in "baseline.log".
-"""
-logging.basicConfig(level=logging.DEBUG, filename="baseline.log")
-logger = logging.getLogger(' ')
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-########################################################################
-
-
-########################################################################
-# visualizer
-########################################################################
-class visualizer(object):
-    def __init__(self):
-        import matplotlib.pyplot as plt
-        self.plt = plt
-        self.fig = self.plt.figure(figsize=(30, 10))
-        self.plt.subplots_adjust(wspace=0.3, hspace=0.3)
-
-    def loss_plot(self, loss, val_loss):
-        """
-        Plot loss curve.
-        loss : list [ float ]
-            training loss time series.
-        val_loss : list [ float ]
-            validation loss time series.
-        return   : None
-        """
-        ax = self.fig.add_subplot(1, 1, 1)
-        ax.cla()
-        ax.plot(loss)
-        ax.plot(val_loss)
-        ax.set_title("Model loss")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss")
-        ax.legend(["Train", "Test"], loc="upper right")
-
-    def save_figure(self, name):
-        """
-        Save figure.
-        name : str
-            save .png file path.
-        return : None
-        """
-        self.plt.savefig(name)
-
-
-########################################################################
-
-
-########################################################################
-# file I/O
-########################################################################
-# pickle I/O
-def save_pickle(filename, save_data):
-    """
-    picklenize the data.
-    filename : str
-        pickle filename
-    data : free datatype
-        some data will be picklenized
-    return : None
-    """
-    logger.info("save_pickle -> {}".format(filename))
-    with open(filename, 'wb') as sf:
-        pickle.dump(save_data, sf)
-
-
-def load_pickle(filename):
-    """
-    unpicklenize the data.
-    filename : str
-        pickle filename
-    return : data
-    """
-    logger.info("load_pickle <- {}".format(filename))
-    with open(filename, 'rb') as lf:
-        load_data = pickle.load(lf)
-    return load_data
-
-
-# wav file Input
-def file_load(wav_name, mono=False):
-    """
-    load .wav file.
-    wav_name : str
-        target .wav file
-    sampling_rate : int
-        audio file sampling_rate
-    mono : boolean
-        When load a multi channels file and this param True, the returned data will be merged for mono data
-    return : numpy.array( float )
-    """
-    try:
-        return librosa.load(wav_name, sr=None, mono=mono)
-    except:
-        logger.error("file_broken or not exists!! : {}".format(wav_name))
-
-
-def demux_wav(wav_name, channel=0):
-    """
-    demux .wav file.
-    wav_name : str
-        target .wav file
-    channel : int
-        target channel number
-    return : numpy.array( float )
-        demuxed mono data
-    Enabled to read multiple sampling rates.
-    Enabled even one channel.
-    """
-    try:
-        multi_channel_data, sr = file_load(wav_name)
-        if multi_channel_data.ndim <= 1:
-            return sr, multi_channel_data
-
-        return sr, numpy.array(multi_channel_data)[channel, :]
-
-    except ValueError as msg:
-        logger.warning(f'{msg}')
-
-
-########################################################################
-
+machine_types = ['id_00', 'id_02']
 
 ########################################################################
 # feature extractor
 ########################################################################
 
-def file_to_wav(file_name):
-    sr, y = demux_wav(file_name)
-    return sr, y
-
-def wav_to_vector_array(sr, y,
-                         n_mels=64,
-                         frames=5,
-                         n_fft=1024,
-                         hop_length=512,
-                         power=2.0):
-    """
-    convert file_name to a vector array.
-    file_name : str
-        target .wav file
-    return : numpy.array( numpy.array( float ) )
-        vector array
-        * dataset.shape = (dataset_size, fearture_vector_length)
-    """
-    # 01 calculate the number of dimensions
-    dims = n_mels * frames
-
-    # 02 generate melspectrogram using librosa (**kwargs == param["librosa"])
-    mel_spectrogram = librosa.feature.melspectrogram(y=y,
-                                                     sr=sr,
-                                                     n_fft=n_fft,
-                                                     hop_length=hop_length,
-                                                     n_mels=n_mels,
-                                                     power=power)
-
-    # 03 convert melspectrogram to log mel energy
-    log_mel_spectrogram = 20.0 / power * numpy.log10(mel_spectrogram + sys.float_info.epsilon)
-
-    # 04 calculate total vector size
-    vectorarray_size = len(log_mel_spectrogram[0, :]) - frames + 1
-
-    # 05 skip too short clips
-    if vectorarray_size < 1:
-        return numpy.empty((0, dims), float)
-
-    # 06 generate feature vectors by concatenating multi_frames
-    vectorarray = numpy.zeros((vectorarray_size, dims), float)
-    for t in range(frames):
-        vectorarray[:, n_mels * t: n_mels * (t + 1)] = log_mel_spectrogram[:, t: t + vectorarray_size].T
-
-    return vectorarray
-
-
-def train_list_to_vector_array(file_list,
+def train_list_to_mixture_spec_vector_array(file_list,
                          msg="calc...",
                          n_mels=64,
                          frames=5,
@@ -247,14 +71,13 @@ def train_list_to_vector_array(file_list,
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
 
-        machine_types = ['id_00', 'id_02']
         ys = 0
         for machine in machine_types:
             filename = file_list[idx].replace('id_00', machine)
-            sr, y = file_to_wav(filename)
+            sr, y = demux_wav(filename)
             ys = ys + y
         
-        vector_array = wav_to_vector_array(sr, ys,
+        vector_array = wav_to_spec_vector_array(sr, ys,
                                             n_mels=n_mels,
                                             frames=frames,
                                             n_fft=n_fft,
@@ -301,7 +124,6 @@ def dataset_generator(target_dir,
     logger.info("target_dir : {}".format(target_dir))
 
     # 01 normal list generate
-    machine_types = ['id_00', 'id_02']
     normal_files = sorted(glob.glob(
         os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir,
                                                                  normal_dir_name=normal_dir_name,
@@ -385,8 +207,6 @@ if __name__ == "__main__":
     # initialize the visualizer
     visualizer = visualizer()
 
-    machine_types = ['id_00', 'id_02']
-
     # load base_directory list
     dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/valve/id_00".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
 
@@ -442,7 +262,7 @@ if __name__ == "__main__":
         # else:
         train_files, train_labels, eval_files, eval_labels = dataset_generator(target_dir)
 
-        train_data = train_list_to_vector_array(train_files,
+        train_data = train_list_to_mixture_spec_vector_array(train_files,
                                             msg="generate train_dataset",
                                             n_mels=param["feature"]["n_mels"],
                                             frames=param["feature"]["frames"],
@@ -481,7 +301,6 @@ if __name__ == "__main__":
         y_pred = numpy.array([0. for k in eval_labels])
         y_true = numpy.array(eval_labels)
 
-        machine_types = ['id_00', 'id_02']
         eval_types = {mt: [] for mt in machine_types}
         # ys = 0
         # for machine in machine_types:
@@ -502,7 +321,7 @@ if __name__ == "__main__":
                 sr, y = demux_wav(file_name)
                 ys += y
 
-                data = wav_to_vector_array(sr, ys,
+                data = wav_to_spec_vector_array(sr, ys,
                                             n_mels=param["feature"]["n_mels"],
                                             frames=param["feature"]["frames"],
                                             n_fft=param["feature"]["n_fft"],
