@@ -43,7 +43,7 @@ __versions__ = "1.0.3"
 ########################################################################
 
 
-machine_types = ['fan', 'slider', 'pump', 'valve']
+machine_types = ['id_00', 'id_02']
 
 
 ########################################################################
@@ -51,7 +51,7 @@ machine_types = ['fan', 'slider', 'pump', 'valve']
 ########################################################################
 
 def train_file_to_mixture_wav(filename):
-    machine_type = os.path.split(os.path.split(os.path.split(os.path.split(filename)[0])[0])[0])[1]
+    machine_type = os.path.split(os.path.split(os.path.split(filename)[0])[0])[1]
     ys = 0
     for machine in machine_types:
         src_filename = filename.replace(machine_type, machine)
@@ -61,7 +61,7 @@ def train_file_to_mixture_wav(filename):
     return sr, ys
     
 def eval_file_to_mixture_wav(filename):
-    machine_type = os.path.split(os.path.split(os.path.split(os.path.split(filename)[0])[0])[0])[1]
+    machine_type = os.path.split(os.path.split(os.path.split(filename)[0])[0])[1]
     ys = 0
     gt_wav = {}
     for normal_type in machine_types:
@@ -150,7 +150,7 @@ def dataset_generator(target_dir,
                                                                  normal_dir_name=normal_dir_name,
                                                                  ext=ext))))
     normal_len = [len(glob.glob(
-        os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir.replace('fan', mt),
+        os.path.abspath("{dir}/{normal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', mt),
                                                                  normal_dir_name=normal_dir_name,
                                                                  ext=ext)))) for mt in machine_types]
     normal_len = min(min(normal_len), len(normal_files))
@@ -161,10 +161,12 @@ def dataset_generator(target_dir,
         logger.exception("no_wav_data!!")
 
     # 02 abnormal list generate
-    abnormal_files = sorted(glob.glob(
-        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('fan', '*'),
-                                                                   abnormal_dir_name=abnormal_dir_name,
-                                                                   ext=ext))))
+    abnormal_files = []
+    for machine_type in machine_types:
+        abnormal_files.extend(sorted(glob.glob(
+            os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', machine_type),
+                                                                 abnormal_dir_name=abnormal_dir_name,
+                                                                 ext=ext)))))   
     abnormal_labels = numpy.ones(len(abnormal_files))
     if len(abnormal_files) == 0:
         logger.exception("no_wav_data!!")
@@ -200,8 +202,8 @@ if __name__ == "__main__":
     visualizer = visualizer()
 
     # load base_directory list
-    dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/fan/id_04".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
-    # dirs = sorted(glob.glob(os.path.abspath("{base}/*/fan/*".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
+    dirs = sorted(glob.glob(os.path.abspath("{base}/6dB/valve/id_00".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
+    # dirs = sorted(glob.glob(os.path.abspath("{base}/*/valve/id_00".format(base=param["base_directory"]))))  # {base}/0dB/fan/id_00/normal/00000000.wav
 
     # setup the result
     result_file = "{result}/{file_name}".format(result=param["result_directory"], file_name=param["result_file"])
@@ -312,11 +314,6 @@ if __name__ == "__main__":
         y_true_types = {mt: numpy.copy(y_true) for mt in machine_types}
 
         eval_types = {mt: [] for mt in machine_types}
-        # ys = 0
-        # for machine in machine_types:
-        #     filename = file_list[idx].replace('fan', machine)
-        #     sr, y = file_to_wav(filename)
-        #     ys = ys + y
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
             # try:
             machine_type = os.path.split(os.path.split(os.path.split(os.path.split(file_name)[0])[0])[0])[1]

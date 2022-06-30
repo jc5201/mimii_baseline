@@ -201,10 +201,12 @@ def dataset_generator(target_dir,
         logger.exception("no_wav_data!!")
 
     # 02 abnormal list generate
-    abnormal_files = sorted(glob.glob(
-        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir,
-                                                                   abnormal_dir_name=abnormal_dir_name,
-                                                                   ext=ext))))
+    abnormal_files = []
+    for machine_type in machine_types:
+        abnormal_files.extend(sorted(glob.glob(
+            os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', machine_type),
+                                                                 abnormal_dir_name=abnormal_dir_name,
+                                                                 ext=ext)))))   
     abnormal_files.extend(sorted(glob.glob(
         os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', 'id_02'),
                                                                    abnormal_dir_name=abnormal_dir_name,
@@ -216,7 +218,7 @@ def dataset_generator(target_dir,
     # 03 separate train & eval
     train_files = normal_files[num_eval_normal:]
     train_labels = normal_labels[num_eval_normal:]
-    eval_normal_files = sum([[fan_file.replace("fan", machine_type) for fan_file in normal_files[:num_eval_normal]] for machine_type in machine_types], [])
+    eval_normal_files = sum([[fan_file.replace("id_00", machine_type) for fan_file in normal_files[:num_eval_normal]] for machine_type in machine_types], [])
     eval_files = numpy.concatenate((eval_normal_files, abnormal_files), axis=0)
     eval_labels = numpy.concatenate((normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], abnormal_labels), axis=0)
     logger.info("train_file num : {num}".format(num=len(train_files)))

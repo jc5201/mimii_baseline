@@ -161,13 +161,11 @@ def dataset_generator(target_dir,
         logger.exception("no_wav_data!!")
 
     # 02 abnormal list generate
-    abnormal_files = sorted(glob.glob(
-        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir,
-                                                                   abnormal_dir_name=abnormal_dir_name,
-                                                                   ext=ext))))
-    abnormal_files.extend(sorted(glob.glob(
-        os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', 'id_02'),
-                                                                   abnormal_dir_name=abnormal_dir_name,
+    abnormal_files = []
+    for machine_type in machine_types:
+        abnormal_files.extend(sorted(glob.glob(
+            os.path.abspath("{dir}/{abnormal_dir_name}/*.{ext}".format(dir=target_dir.replace('id_00', machine_type),
+                                                                 abnormal_dir_name=abnormal_dir_name,
                                                                  ext=ext)))))         
 
     abnormal_labels = numpy.ones(len(abnormal_files))
