@@ -52,7 +52,7 @@ num_eval_normal = 250
 ########################################################################
 
 def generate_label(y):
-    rms_fig = librosa.feature.rms(y)
+    rms_fig = librosa.feature.rms(y=y)
     rms_tensor = torch.tensor(rms_fig).reshape(1, -1, 1)
     rms_trim = rms_tensor.expand(-1, -1, 512).reshape(1, -1)[:, :160000]
 
@@ -220,7 +220,7 @@ def dataset_generator(target_dir,
     train_labels = normal_labels[num_eval_normal:]
     eval_normal_files = sum([[fan_file.replace("id_00", machine_type) for fan_file in normal_files[:num_eval_normal]] for machine_type in machine_types], [])
     eval_files = numpy.concatenate((eval_normal_files, abnormal_files), axis=0)
-    eval_labels = numpy.concatenate((normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], abnormal_labels), axis=0)
+    eval_labels = numpy.concatenate((normal_labels[:num_eval_normal], normal_labels[:num_eval_normal], abnormal_labels), axis=0)
     logger.info("train_file num : {num}".format(num=len(train_files)))
     logger.info("eval_file  num : {num}".format(num=len(eval_files)))
 
@@ -291,7 +291,7 @@ if __name__ == "__main__":
                                                                           db=db)
    
 
-        model_path = '/home/lyj/asteroid/egs/mimii/X-UMX/output_w_cont_task_test/checkpoints/epoch=985-step=44369.ckpt'
+        model_path = '/hdd/hdd1/lyj/xumx/w-control/epoch=985-step=44369.ckpt'
 
         sep_model = xumx_model(model_path)
         sep_model.eval()
@@ -348,11 +348,6 @@ if __name__ == "__main__":
         sdr_pred_abnormal = {mt: [] for mt in machine_types}
 
         eval_types = {mt: [] for mt in machine_types}
-        # ys = 0
-        # for machine in machine_types:
-        #     filename = file_list[idx].replace('fan', machine)
-        #     sr, y = file_to_wav(filename)
-        #     ys = ys + y
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
             machine_type = os.path.split(os.path.split(os.path.split(file_name)[0])[0])[1]
             target_idx = machine_types.index(machine_type)
@@ -379,7 +374,7 @@ if __name__ == "__main__":
             y_pred[num] = torch.mean(error).detach().cpu().numpy()
             eval_types[machine_type].append(num)
 
-            if num < num_eval_normal * 4: # normal file
+            if num < num_eval_normal * 2: # normal file
                 sdr_pred_normal[machine_type].append(numpy.mean(sep_sdr))
             else: # abnormal file
                 sdr_pred_abnormal[machine_type].append(numpy.mean(sep_sdr))
@@ -387,6 +382,11 @@ if __name__ == "__main__":
         scores = []
         for machine_type in machine_types:
             score = metrics.roc_auc_score(y_true[eval_types[machine_type]], y_pred[eval_types[machine_type]])
+
+            # code to dump errors
+            # logger.info("anomaly score abnormal : {}".format(str(numpy.array(y_pred[eval_types[machine_type]])[y_true[eval_types[machine_type]].astype(bool)])))
+            # logger.info("anomaly score normal : {}".format(str(numpy.array(y_pred[eval_types[machine_type]])[numpy.logical_not(y_true[eval_types[machine_type]])])))
+
             logger.info("AUC_{} : {}".format(machine_type, score))
             evaluation_result["AUC_{}".format(machine_type)] = float(score)
             scores.append(score)

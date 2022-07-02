@@ -93,7 +93,10 @@ def demux_wav(wav_name, channel=1):
         if multi_channel_data.ndim <= 1:
             return sr, multi_channel_data
 
-        return sr, numpy.array(multi_channel_data)[channel, :]
+        if channel > 1:
+            return sr, numpy.array(multi_channel_data)[:channel, :]
+        else:
+            return sr, numpy.array(multi_channel_data)[0, :]
 
     except ValueError as msg:
         logger.warning(f'{msg}')
