@@ -218,3 +218,58 @@ def file_to_spec_vector_array(file_name,
                          hop_length,
                          power)
 
+
+def wav_to_spec_vector_2d_array(sr, y,
+                         n_mels=64,
+                         frames=5,
+                         n_fft=1024,
+                         hop_length=512,
+                         power=2.0):
+    """
+    convert file_name to a vector array.
+    file_name : str
+        target .wav file
+    return : numpy.array( numpy.array( float ) )
+        vector array
+        * dataset.shape = (dataset_size, fearture_vector_length)
+    """
+
+    # 02 generate melspectrogram using librosa (**kwargs == param["librosa"])
+    mel_spectrogram = librosa.feature.melspectrogram(y=y,
+                                                     sr=sr,
+                                                     n_fft=n_fft,
+                                                     hop_length=hop_length,
+                                                     n_mels=n_mels,
+                                                     power=power)
+
+    # 03 convert melspectrogram to log mel energy
+    log_mel_spectrogram = 20.0 / power * numpy.log10(mel_spectrogram + sys.float_info.epsilon)
+
+    # 04 calculate total vector size
+    vectorarray_size = len(log_mel_spectrogram[0, :]) - frames + 1
+
+    # 05 skip too short clips
+    if vectorarray_size < 1:
+        return numpy.empty((0, frames, n_mels), float)
+
+    # 06 generate feature vectors by concatenating multi_frames
+    vectorarray = numpy.zeros((vectorarray_size, frames, n_mels), float)
+    for t in range(frames):
+        vectorarray[:, t, :] = log_mel_spectrogram[:, t: t + vectorarray_size].T
+
+    return vectorarray
+
+def file_to_spec_vector_2d_array(file_name,
+                         n_mels=64,
+                         frames=5,
+                         n_fft=1024,
+                         hop_length=512,
+                         power=2.0):
+
+    sr, y = demux_wav(file_name)
+    return wav_to_spec_vector_2d_array(sr, y, 
+                         n_mels,
+                         frames,
+                         n_fft,
+                         hop_length,
+                         power)

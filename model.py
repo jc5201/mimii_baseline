@@ -29,6 +29,29 @@ class TorchModel(nn.Module):
         x = self.ff(x)
         return x
 
+class TorchConvModel(nn.Module):
+    def __init__(self):
+        super(TorchConvModel,self).__init__()
+        self.ff = nn.Sequential(
+            nn.Conv2d(1, 4, kernel_size=5),
+            nn.ReLU(),
+            nn.Conv2d(4, 32, kernel_size=3),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3),
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, kernel_size=3),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 4, kernel_size=3),
+            nn.ReLU(),
+            nn.ConvTranspose2d(4, 1, kernel_size=5),
+        )
+
+    def forward(self, x):
+        assert len(x.shape) == 3
+        #[B, T, F]
+        x = self.ff(x.unsqueeze(3)).squeeze(3)
+        return x
+
 ########################################################################
 
 class XUMXSystem(torch.nn.Module):

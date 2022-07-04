@@ -31,7 +31,7 @@ import torch
 import torch.nn as nn
 
 from utils import *
-from model import TorchModel
+from model import TorchConvModel
 ########################################################################
 
 
@@ -47,7 +47,7 @@ __versions__ = "1.0.3"
 # feature extractor
 ########################################################################
 
-def list_to_spec_vector_array(file_list,
+def list_to_spec_vector_2d_array(file_list,
                          msg="calc...",
                          n_mels=64,
                          frames=5,
@@ -66,13 +66,11 @@ def list_to_spec_vector_array(file_list,
         training dataset (when generate the validation data, this function is not used.)
         * dataset.shape = (total_dataset_size, feature_vector_length)
     """
-    # 01 calculate the number of dimensions
-    dims = n_mels * frames
 
     # 02 loop of file_to_vectorarray
     for idx in tqdm(range(len(file_list)), desc=msg):
 
-        vector_array = file_to_spec_vector_array(file_list[idx],
+        vector_array = file_to_spec_vector_2d_array(file_list[idx],
                                             n_mels=n_mels,
                                             frames=frames,
                                             n_fft=n_fft,
@@ -80,7 +78,7 @@ def list_to_spec_vector_array(file_list,
                                             power=power)
 
         if idx == 0:
-            dataset = numpy.zeros((vector_array.shape[0] * len(file_list), dims), float)
+            dataset = numpy.zeros((vector_array.shape[0] * len(file_list), frames, n_mels), float)
 
         dataset[vector_array.shape[0] * idx: vector_array.shape[0] * (idx + 1), :] = vector_array
 
@@ -96,7 +94,7 @@ class AEDataset(torch.utils.data.Dataset):
         self.file_list = file_list
         self.target_source = target_source
 
-        self.data_vector = list_to_spec_vector_array(self.file_list,
+        self.data_vector = list_to_spec_vector_2d_array(self.file_list,
                                             msg="generate train_dataset",
                                             n_mels=param["feature"]["n_mels"],
                                             frames=param["feature"]["frames"],
@@ -107,7 +105,7 @@ class AEDataset(torch.utils.data.Dataset):
         
     
     def __getitem__(self, index):
-        return torch.Tensor(self.data_vector[index, :])
+        return torch.Tensor(self.data_vector[index, :, :])
     
     def __len__(self):
         return self.data_vector.shape[0]
@@ -257,7 +255,7 @@ if __name__ == "__main__":
         # model training
         print("============== MODEL TRAINING ==============")
         dim_input = train_dataset.data_vector.shape[1]
-        model = TorchModel(dim_input).cuda()
+        model = TorchConvModel(dim_input).cuda()
         optimizer = torch.optim.Adam(model.parameters(), lr=1.0e-3)
         loss_fn = nn.MSELoss()
 
@@ -289,7 +287,7 @@ if __name__ == "__main__":
                                         hop_length=param["feature"]["hop_length"],
                                         power=param["feature"]["power"])
             data = torch.Tensor(data).cuda()
-            error = torch.mean(((data - model(data)) ** 2), dim=1)
+            error = torch.mean(((data - model(data)) ** 2), dim=[1, 2])
             # error = numpy.mean(numpy.square(data - model.predict(data)), axis=1)
             y_pred[num] = torch.mean(error).detach().cpu().numpy()
 
