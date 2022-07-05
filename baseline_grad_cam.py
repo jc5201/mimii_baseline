@@ -30,6 +30,9 @@ from sklearn import metrics
 import torch
 import torch.nn as nn
 
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.image import show_cam_on_image
+
 from utils import *
 from model import TorchConvModel
 ########################################################################
@@ -80,7 +83,7 @@ def list_to_spec_vector_2d_array(file_list,
         if idx == 0:
             dataset = numpy.zeros((vector_array.shape[0] * len(file_list), frames, n_mels), float)
 
-        dataset[vector_array.shape[0] * idx: vector_array.shape[0] * (idx + 1), :] = vector_array
+        dataset[vector_array.shape[0] * idx: vector_array.shape[0] * (idx + 1), :, :] = vector_array
 
     return dataset
 
@@ -172,6 +175,15 @@ def dataset_generator(target_dir,
 
 ########################################################################
 
+class ReconOutputTarget:
+    def __init__(self, model_input):
+        self.model_input = model_input
+        self.error_func = nn.MSELoss(reduction='mean')
+    def __call__(self, model_output):
+        assert self.model_input.shape == model_output.shape
+        error = self.error_func(self.model_input, model_output)
+        return error
+
 
 ########################################################################
 # main
@@ -209,28 +221,28 @@ if __name__ == "__main__":
 
         # setup path
         evaluation_result = {}
-        train_pickle = "{pickle}/train_{machine_type}_{machine_id}_{db}.pickle".format(pickle=param["pickle_directory"],
+        train_pickle = "{pickle}/bgc_train_{machine_type}_{machine_id}_{db}.pickle".format(pickle=param["pickle_directory"],
                                                                                        machine_type=machine_type,
                                                                                        machine_id=machine_id, db=db)
-        eval_files_pickle = "{pickle}/eval_files_{machine_type}_{machine_id}_{db}.pickle".format(
+        eval_files_pickle = "{pickle}/bgc_eval_files_{machine_type}_{machine_id}_{db}.pickle".format(
                                                                                        pickle=param["pickle_directory"],
                                                                                        machine_type=machine_type,
                                                                                        machine_id=machine_id,
                                                                                        db=db)
-        eval_labels_pickle = "{pickle}/eval_labels_{machine_type}_{machine_id}_{db}.pickle".format(
+        eval_labels_pickle = "{pickle}/ebgc_val_labels_{machine_type}_{machine_id}_{db}.pickle".format(
                                                                                        pickle=param["pickle_directory"],
                                                                                        machine_type=machine_type,
                                                                                        machine_id=machine_id,
                                                                                        db=db)
-        model_file = "{model}/model_{machine_type}_{machine_id}_{db}.hdf5".format(model=param["model_directory"],
+        model_file = "{model}/bgc_model_{machine_type}_{machine_id}_{db}.hdf5".format(model=param["model_directory"],
                                                                                   machine_type=machine_type,
                                                                                   machine_id=machine_id,
                                                                                   db=db)
-        history_img = "{model}/history_{machine_type}_{machine_id}_{db}.png".format(model=param["model_directory"],
+        history_img = "{model}/bgc_history_{machine_type}_{machine_id}_{db}.png".format(model=param["model_directory"],
                                                                                     machine_type=machine_type,
                                                                                     machine_id=machine_id,
                                                                                     db=db)
-        evaluation_result_key = "{machine_type}_{machine_id}_{db}".format(machine_type=machine_type,
+        evaluation_result_key = "bgc_{machine_type}_{machine_id}_{db}".format(machine_type=machine_type,
                                                                           machine_id=machine_id,
                                                                           db=db)
 
@@ -255,32 +267,39 @@ if __name__ == "__main__":
         # model training
         print("============== MODEL TRAINING ==============")
         dim_input = train_dataset.data_vector.shape[1]
-        model = TorchConvModel(dim_input).cuda()
-        optimizer = torch.optim.Adam(model.parameters(), lr=1.0e-3)
-        loss_fn = nn.MSELoss()
+        model = TorchConvModel().cuda()
+        if os.path.exists(model_file):
+            model.load_state_dict(torch.load(model_file, map_location='cuda:0'))
+        else:
+            optimizer = torch.optim.Adam(model.parameters(), lr=1.0e-3)
+            loss_fn = nn.MSELoss()
 
-        for epoch in range(param["fit"]["epochs"]):
-            losses = []
-            for batch in train_loader:
-                batch = batch.cuda()
-                pred = model(batch)
-                loss = loss_fn(pred, batch)
+            for epoch in range(param["fit"]["epochs"]):
+                losses = []
+                for batch in train_loader:
+                    batch = batch.cuda()
+                    pred = model(batch)
+                    loss = loss_fn(pred, batch)
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                losses.append(loss.item())
-            if epoch % 10 == 0:
-                print(f"epoch {epoch}: loss {sum(losses) / len(losses)}")
-        model.eval()
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    losses.append(loss.item())
+                if epoch % 10 == 0:
+                    print(f"epoch {epoch}: loss {sum(losses) / len(losses)}")
+            model.eval()
+            torch.save(model.state_dict(), model_file)
 
         # evaluation
         print("============== EVALUATION ==============")
         y_pred = [0. for k in eval_labels]
         y_true = eval_labels
 
+        grad_target_layers = [model.ff[6]]
+        cam = GradCAM(model=model, target_layers=grad_target_layers, use_cuda=True)
+
         for num, file_name in tqdm(enumerate(eval_files), total=len(eval_files)):
-            data = file_to_spec_vector_array(file_name,
+            data = file_to_spec_vector_2d_array(file_name,
                                         n_mels=param["feature"]["n_mels"],
                                         frames=param["feature"]["frames"],
                                         n_fft=param["feature"]["n_fft"],
@@ -288,8 +307,10 @@ if __name__ == "__main__":
                                         power=param["feature"]["power"])
             data = torch.Tensor(data).cuda()
             error = torch.mean(((data - model(data)) ** 2), dim=[1, 2])
-            # error = numpy.mean(numpy.square(data - model.predict(data)), axis=1)
             y_pred[num] = torch.mean(error).detach().cpu().numpy()
+
+            targets = [ReconOutputTarget(data[0, :, :])]
+            cam_result = cam(input_tensor=data, targets=targets)
 
         score = metrics.roc_auc_score(y_true, y_pred)
         logger.info("anomaly score abnormal : {}".format(str(numpy.array(y_pred)[y_true.astype(bool)])))

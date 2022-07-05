@@ -49,7 +49,7 @@ class TorchConvModel(nn.Module):
     def forward(self, x):
         assert len(x.shape) == 3
         #[B, T, F]
-        x = self.ff(x.unsqueeze(3)).squeeze(3)
+        x = self.ff(x.unsqueeze(1)).squeeze(1)
         return x
 
 ########################################################################
