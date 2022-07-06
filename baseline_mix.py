@@ -350,6 +350,8 @@ if __name__ == "__main__":
         scores = []
         for machine_type in machine_types:
             score = metrics.roc_auc_score(y_true[eval_types[machine_type]], y_pred[eval_types[machine_type]])
+            # logger.info("anomaly score abnormal : {}".format(str(numpy.array(y_pred[eval_types[machine_type]])[y_true[eval_types[machine_type]].astype(bool)])))
+            # logger.info("anomaly score normal : {}".format(str(numpy.array(y_pred[eval_types[machine_type]])[numpy.logical_not(y_true[eval_types[machine_type]])])))
             logger.info("AUC_{} : {}".format(machine_type, score))
             evaluation_result["AUC_{}".format(machine_type)] = float(score)
             scores.append(score)
